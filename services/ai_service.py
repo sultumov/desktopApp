@@ -23,16 +23,62 @@ class AIService:
     def __init__(self):
         """Инициализирует сервис."""
         self.service = os.getenv("AI_SERVICE", "OpenAI")
-        self.api_key = os.getenv("API_KEY")
+        self.api_key = os.getenv("OPENAI_API_KEY")
         self.model = os.getenv("MODEL", "GPT-3.5")
         self.language = os.getenv("LANGUAGE", "Русский")
+        
+        # Устанавливаем переменные окружения для прокси, если они нужны в будущем
+        # Библиотека OpenAI автоматически использует эти переменные
+        # os.environ["HTTPS_PROXY"] = "http://proxy.example.com:8080"
+        # os.environ["HTTP_PROXY"] = "http://proxy.example.com:8080"
+        
+        # Логируем информацию о настройках
+        logger.info(f"AI Service: {self.service}")
+        logger.info(f"API Key: {self.api_key[:5]}... (length: {len(self.api_key) if self.api_key else 0})")
+        logger.info(f"Model: {self.model}")
+        logger.info(f"Language: {self.language}")
         
     def create_summary(self, article: Article) -> str:
         """Создает краткое содержание статьи."""
         try:
             logger.info(f"Создание краткого содержания для статьи: {article.title}")
-            # TODO: Реализовать создание краткого содержания с помощью AI
-            return f"""Краткое содержание статьи "{article.title}":
+            
+            if self.service == "OpenAI" and self.api_key:
+                from openai import OpenAI
+                
+                # Подготавливаем данные о статье
+                article_info = f"""Название: {article.title}
+Авторы: {', '.join(article.authors)}
+Аннотация: {article.abstract or article.summary}
+Категории: {', '.join(article.categories)}
+Год: {article.year}
+"""
+                
+                # Отладочная информация
+                logger.info(f"Инициализация клиента OpenAI с API ключом {self.api_key[:10]}...")
+                
+                # Настраиваем клиента OpenAI
+                os.environ["OPENAI_API_KEY"] = self.api_key
+                client = OpenAI()
+                logger.info("Клиент OpenAI успешно создан")
+                
+                # Запрос к API
+                logger.info("Отправка запроса к API OpenAI...")
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "Ты - научный ассистент, который создает краткое содержание научных статей."},
+                        {"role": "user", "content": f"Создай структурированное краткое содержание следующей научной статьи, выделив основные идеи, методологию, результаты и выводы. Используй разметку Markdown для структурирования.\n\nСтатья:\n{article_info}"}
+                    ],
+                    max_tokens=1000,
+                    temperature=0.3,
+                )
+                logger.info("Ответ от API OpenAI получен")
+                
+                return response.choices[0].message.content
+            else:
+                # Если API ключ не настроен, возвращаем заглушку
+                return f"""Краткое содержание статьи "{article.title}":
 
 1. Основные идеи:
    - Идея 1
@@ -59,16 +105,58 @@ class AIService:
         """Ищет источники в статье."""
         try:
             logger.info(f"Поиск источников для статьи: {article.title}")
-            # TODO: Реализовать поиск источников с помощью AI
-            return [
-                "Reference 1",
-                "Reference 2",
-                "Reference 3"
-            ]
+            
+            if self.service == "OpenAI" and self.api_key:
+                from openai import OpenAI
+                
+                # Подготавливаем данные о статье
+                article_info = f"""Название: {article.title}
+Авторы: {', '.join(article.authors)}
+Аннотация: {article.abstract or article.summary}
+Категории: {', '.join(article.categories)}
+Год: {article.year}
+"""
+                
+                # Настраиваем клиента OpenAI
+                os.environ["OPENAI_API_KEY"] = self.api_key
+                client = OpenAI()
+                
+                # Запрос к API
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "Ты - научный ассистент, который предлагает возможные источники и ссылки для научных статей."},
+                        {"role": "user", "content": f"На основе информации о научной статье, предложи 5-7 вероятных источников, которые могут быть цитированы в ней. Формат: автор, название, год. Статья:\n{article_info}"}
+                    ],
+                    max_tokens=1000,
+                    temperature=0.7,
+                )
+                
+                text_response = response.choices[0].message.content
+                # Разбиваем ответ на строки и очищаем
+                references = [line.strip() for line in text_response.split('\n') 
+                             if line.strip() and not line.strip().startswith('#')]
+                
+                # Если нет результатов, возвращаем заглушку
+                if not references:
+                    return [
+                        "Smith, J. et al. (2021). Recent advances in the field.",
+                        "Johnson, M. & Williams, K. (2020). Theoretical foundations.",
+                        "Rodriguez, A. (2019). Empirical evidence in related work."
+                    ]
+                    
+                return references
+            else:
+                # Если API ключ не настроен, возвращаем заглушку
+                return [
+                    "Smith, J. et al. (2021). Recent advances in the field.",
+                    "Johnson, M. & Williams, K. (2020). Theoretical foundations.",
+                    "Rodriguez, A. (2019). Empirical evidence in related work."
+                ]
         except Exception as e:
             logger.error(f"Ошибка при поиске источников: {str(e)}")
             raise
-
+        
     def generate_summary(self, text, max_length=1500):
         """
         Генерирует краткое содержание статьи.
@@ -184,12 +272,13 @@ class AIService:
             str: Краткое содержание статьи
         """
         try:
-            import openai
+            from openai import OpenAI
             
             # Настраиваем клиента OpenAI
-            openai.api_key = self.api_key
+            os.environ["OPENAI_API_KEY"] = self.api_key
+            client = OpenAI()
             
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "Ты - научный ассистент, который создает краткое содержание научных статей."},
@@ -376,12 +465,13 @@ class AIService:
             list: Список объектов Article с найденными источниками
         """
         try:
-            import openai
+            from openai import OpenAI
             import json
             from models.article import Article, Author
             
             # Настраиваем клиента OpenAI
-            openai.api_key = self.api_key
+            os.environ["OPENAI_API_KEY"] = self.api_key
+            client = OpenAI()
             
             # Ограничиваем длину текста
             if len(text) > 10000:
@@ -395,40 +485,36 @@ class AIService:
             Возвращай данные только в формате JSON согласно указанной схеме.
             """
             
-            user_prompt = f"""
-            Проанализируй текст и извлеки все библиографические ссылки. Верни их в формате JSON массива:
+            # Создаем описание формата JSON
+            json_format = """
             [
-              {{
-                "title": "Название статьи",
+                {
+                    "title": "Название статьи или источника",
                 "authors": ["Автор 1", "Автор 2"],
                 "year": 2020,
-                "journal": "Название журнала",
-                "confidence": 0.95
-              }},
-              ...
+                    "journal": "Название журнала или издательства",
+                    "confidence": 0.9
+                }
             ]
-            
-            Если ты не уверен в каком-то значении, укажи null. Значение "confidence" должно отражать твою уверенность в правильности извлеченной ссылки (от 0 до 1).
-            
-            Текст:
-            {text}
             """
             
-            response = openai.ChatCompletion.create(
+            # Запрос к API
+            response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
+                    {"role": "user", "content": f"Вот формат JSON, который ты должен использовать:\n{json_format}\n\nПроанализируй следующий текст и найди в нем библиографические ссылки:\n\n{text}"}
                 ],
                 max_tokens=1500,
-                temperature=0.2,
+                temperature=0.3,
             )
             
-            response_text = response.choices[0].message.content.strip()
-            
             # Извлекаем JSON из ответа
-            # Иногда модель может вернуть текст до или после JSON
-            json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+            response_text = response.choices[0].message.content
+            # Ищем JSON в ответе с помощью регулярного выражения
+            import re
+            json_match = re.search(r'\[\s*\{.*\}\s*\]', response_text, re.DOTALL)
+            
             if json_match:
                 json_str = json_match.group(0)
                 try:

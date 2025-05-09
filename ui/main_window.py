@@ -1333,8 +1333,9 @@ class MainWindow(QMainWindow):
             if not articles:
                 self.statusBar().showMessage("Статьи не найдены. Попробуйте изменить запрос.")
                 self.load_more_button.setVisible(False)
-            return
-        
+                return
+            
+            # Добавляем статьи в список
             for article in articles:
                 item = QListWidgetItem()
                 item.setText(f"{article.title}\nАвторы: {', '.join(article.authors)}")

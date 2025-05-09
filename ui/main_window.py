@@ -1,850 +1,1490 @@
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QTabWidget, QPushButton, QLabel, QLineEdit, 
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QTabWidget, QPushButton, QLabel, QLineEdit,
     QTextEdit, QListWidget, QSplitter, QFileDialog,
-    QStatusBar, QComboBox, QDialog, QFormLayout, QDialogButtonBox
+    QStatusBar, QComboBox, QDialog, QFormLayout, QDialogButtonBox,
+    QFrame, QToolBar, QToolButton, QMessageBox, QApplication, QListWidgetItem
 )
 from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QIcon, QFont
+from PyQt6.QtGui import QIcon, QFont, QAction
 import os
+from .styles import MAIN_STYLE, DIALOG_STYLE
+from services import ArxivService, AIService, StorageService
 
 class SettingsDialog(QDialog):
     """Диалог настроек приложения."""
     
     def __init__(self, parent=None):
+        """Инициализирует диалог настроек."""
         super().__init__(parent)
         self.setWindowTitle("Настройки")
-        self.resize(400, 200)
+        self.setMinimumWidth(400)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: white;
+            }
+            QLabel {
+                color: #333333;
+            }
+            QLineEdit {
+                padding: 8px;
+                border: 1px solid #BDBDBD;
+                border-radius: 4px;
+                background: white;
+            }
+            QLineEdit:focus {
+                border: 1px solid #2196F3;
+            }
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                min-width: 100px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:pressed {
+                background-color: #0D47A1;
+            }
+            QComboBox {
+                padding: 8px;
+                border: 1px solid #BDBDBD;
+                border-radius: 4px;
+                background: white;
+            }
+            QComboBox:hover {
+                border: 1px solid #2196F3;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: url(ui/icons/down-arrow.svg);
+                width: 12px;
+                height: 12px;
+            }
+            QDialogButtonBox {
+                button-layout: spread;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        # Заголовок
+        title_label = QLabel("Настройки приложения")
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 20px;
+                font-weight: bold;
+                color: #333333;
+            }
+        """)
+        layout.addWidget(title_label)
+
+        # Описание
+        description = QLabel(
+            "Настройте параметры приложения для работы с ArXiv и AI-сервисами. "
+            "Изменения вступят в силу после перезапуска приложения."
+        )
+        description.setWordWrap(True)
+        description.setStyleSheet("""
+            QLabel {
+                color: #666666;
+                font-size: 14px;
+                line-height: 1.5;
+            }
+        """)
+        layout.addWidget(description)
+
+        # Форма настроек
+        form_layout = QFormLayout()
+        form_layout.setSpacing(12)
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        # AI-сервис
+        self.ai_service = QComboBox()
+        self.ai_service.addItems(["OpenAI", "Anthropic", "Google"])
+        form_layout.addRow("AI-сервис:", self.ai_service)
+
+        # API ключ
+        self.api_key = QLineEdit()
+        self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        form_layout.addRow("API ключ:", self.api_key)
+
+        # Модель
+        self.model = QComboBox()
+        self.model.addItems(["GPT-4", "GPT-3.5", "Claude-3", "Gemini"])
+        form_layout.addRow("Модель:", self.model)
+
+        # Язык
+        self.language = QComboBox()
+        self.language.addItems(["Русский", "English"])
+        form_layout.addRow("Язык:", self.language)
+
+        # Количество результатов
+        self.results_count = QComboBox()
+        self.results_count.addItems(["10", "20", "30", "50", "100"])
+        form_layout.addRow("Результатов на странице:", self.results_count)
+
+        layout.addLayout(form_layout)
         
-        # Инициализация интерфейса
-        self.init_ui()
-        
+        # Кнопки
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        button_box.button(QDialogButtonBox.StandardButton.Save).setText("Сохранить")
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Отмена")
+        layout.addWidget(button_box)
+
         # Загрузка текущих настроек
         self.load_settings()
     
-    def init_ui(self):
-        """Инициализирует интерфейс диалога."""
-        # Основной макет
-        layout = QFormLayout(self)
-        
-        # Выбор AI бэкенда
-        self.ai_backend_combo = QComboBox()
-        self.ai_backend_combo.addItem("OpenAI (GPT-4)", "openai")
-        self.ai_backend_combo.addItem("Hugging Face (локально)", "huggingface")
-        layout.addRow("ИИ бэкенд:", self.ai_backend_combo)
-        
-        # Выбор источника данных
-        self.scholar_source_combo = QComboBox()
-        self.scholar_source_combo.addItem("Google Scholar", "google_scholar")
-        self.scholar_source_combo.addItem("Semantic Scholar", "semantic_scholar")
-        layout.addRow("Источник статей:", self.scholar_source_combo)
-        
-        # API ключ OpenAI
-        self.api_key_input = QLineEdit()
-        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        layout.addRow("OpenAI API ключ:", self.api_key_input)
-        
-        # API ключ Semantic Scholar (опционально)
-        self.semantic_scholar_key_input = QLineEdit()
-        self.semantic_scholar_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.semantic_scholar_key_input.setPlaceholderText("Необязательно")
-        layout.addRow("Semantic Scholar API ключ:", self.semantic_scholar_key_input)
-        
-        # Кнопки
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        layout.addRow(button_box)
-    
     def load_settings(self):
-        """Загружает текущие настройки из .env файла."""
+        """Загружает текущие настройки."""
         try:
-            # Загружаем .env файл
-            env_vars = {}
-            env_path = ".env"
-            
-            if os.path.exists(env_path):
-                with open(env_path, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith('#'):
-                            key, value = line.split('=', 1)
-                            env_vars[key.strip()] = value.strip()
-            
-            # OpenAI API ключ
-            if "OPENAI_API_KEY" in env_vars:
-                self.api_key_input.setText(env_vars["OPENAI_API_KEY"])
-            
-            # Semantic Scholar API ключ
-            if "SEMANTIC_SCHOLAR_API_KEY" in env_vars:
-                self.semantic_scholar_key_input.setText(env_vars["SEMANTIC_SCHOLAR_API_KEY"])
-            
-            # AI бэкенд
-            if "AI_BACKEND" in env_vars:
-                backend = env_vars["AI_BACKEND"].lower()
-                index = self.ai_backend_combo.findData(backend)
-                if index >= 0:
-                    self.ai_backend_combo.setCurrentIndex(index)
-            
-            # Scholar источник
-            if "SCHOLAR_SOURCE" in env_vars:
-                source = env_vars["SCHOLAR_SOURCE"].lower()
-                index = self.scholar_source_combo.findData(source)
-                if index >= 0:
-                    self.scholar_source_combo.setCurrentIndex(index)
-        
-        except Exception as e:
-            print(f"Ошибка при загрузке настроек: {str(e)}")
-    
-    def save_settings(self):
-        """Сохраняет настройки в .env файл."""
-        try:
-            # Получаем значения
-            api_key = self.api_key_input.text()
-            backend = self.ai_backend_combo.currentData()
-            scholar_source = self.scholar_source_combo.currentData()
-            semantic_scholar_key = self.semantic_scholar_key_input.text()
-            
-            # Загружаем текущий .env файл
-            env_lines = []
-            env_path = ".env"
-            
-            if os.path.exists(env_path):
-                with open(env_path, 'r', encoding='utf-8') as f:
-                    env_lines = f.readlines()
-            
-            # Обновляем значения
-            updated = {
-                "OPENAI_API_KEY": False, 
-                "AI_BACKEND": False,
-                "SCHOLAR_SOURCE": False,
-                "SEMANTIC_SCHOLAR_API_KEY": False
-            }
-            new_lines = []
-            
-            for line in env_lines:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    key, _ = line.split('=', 1)
-                    key = key.strip()
-                    
-                    if key == "OPENAI_API_KEY":
-                        new_lines.append(f"OPENAI_API_KEY={api_key}")
-                        updated["OPENAI_API_KEY"] = True
-                    elif key == "AI_BACKEND":
-                        new_lines.append(f"AI_BACKEND={backend}")
-                        updated["AI_BACKEND"] = True
-                    elif key == "SCHOLAR_SOURCE":
-                        new_lines.append(f"SCHOLAR_SOURCE={scholar_source}")
-                        updated["SCHOLAR_SOURCE"] = True
-                    elif key == "SEMANTIC_SCHOLAR_API_KEY":
-                        new_lines.append(f"SEMANTIC_SCHOLAR_API_KEY={semantic_scholar_key}")
-                        updated["SEMANTIC_SCHOLAR_API_KEY"] = True
-                    else:
-                        new_lines.append(line)
-                else:
-                    new_lines.append(line)
-            
-            # Добавляем недостающие значения
-            if not updated["OPENAI_API_KEY"]:
-                new_lines.append(f"OPENAI_API_KEY={api_key}")
-            if not updated["AI_BACKEND"]:
-                new_lines.append(f"AI_BACKEND={backend}")
-            if not updated["SCHOLAR_SOURCE"]:
-                new_lines.append(f"SCHOLAR_SOURCE={scholar_source}")
-            if not updated["SEMANTIC_SCHOLAR_API_KEY"]:
-                new_lines.append(f"SEMANTIC_SCHOLAR_API_KEY={semantic_scholar_key}")
-            
-            # Сохраняем обновленный файл
-            with open(env_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(new_lines))
-            
-            return True
-        
-        except Exception as e:
-            print(f"Ошибка при сохранении настроек: {str(e)}")
-            return False
-    
+            with open(".env") as f:
+                for line in f:
+                    if "=" not in line:
+                        continue
+                    key, value = line.strip().split("=", 1)
+                    if key == "AI_SERVICE":
+                        self.ai_service.setCurrentText(value)
+                    elif key == "API_KEY":
+                        self.api_key.setText(value)
+                    elif key == "MODEL":
+                        self.model.setCurrentText(value)
+                    elif key == "LANGUAGE":
+                        self.language.setCurrentText(value)
+                    elif key == "RESULTS_COUNT":
+                        self.results_count.setCurrentText(value)
+        except FileNotFoundError:
+            pass
+
     def accept(self):
-        """Обработчик нажатия кнопки OK."""
-        if self.save_settings():
+        """Сохраняет настройки и закрывает диалог."""
+        try:
+            with open(".env", "w") as f:
+                f.write(f"AI_SERVICE={self.ai_service.currentText()}\n")
+                f.write(f"API_KEY={self.api_key.text()}\n")
+                f.write(f"MODEL={self.model.currentText()}\n")
+                f.write(f"LANGUAGE={self.language.currentText()}\n")
+                f.write(f"RESULTS_COUNT={self.results_count.currentText()}\n")
             super().accept()
-            # Сообщаем родителю, что настройки изменились
-            if hasattr(self.parent(), "settings_changed"):
+            if self.parent():
                 self.parent().settings_changed()
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Ошибка",
+                f"Не удалось сохранить настройки: {str(e)}"
+            )
 
 class MainWindow(QMainWindow):
-    def __init__(self, ai_service, scholar_service, storage_service):
+    def __init__(self):
+        """Инициализирует главное окно приложения."""
         super().__init__()
-        
-        # Сохраняем ссылки на сервисы
-        self.ai_service = ai_service
-        self.scholar_service = scholar_service
-        self.storage_service = storage_service
-        
+
+        # Инициализация сервисов
+        self.arxiv_service = ArxivService()
+        self.ai_service = AIService()
+        self.storage_service = StorageService()
+
         # Настройка главного окна
-        self.setWindowTitle("Research Assistant")
-        self.setMinimumSize(1000, 700)
-        
-        # Создание вкладок для разных функций
-        self.init_ui()
-        
-    def init_ui(self):
-        # Создаем центральный виджет
+        self.setWindowTitle("ArXiv Assistant")
+        self.setMinimumSize(1200, 800)
+
+        # Создание центрального виджета
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
-        # Основной макет
-        main_layout = QVBoxLayout(central_widget)
-        
-        # Создаем виджет с вкладками
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
-        self.tabs.setTabPosition(QTabWidget.TabPosition.North)
-        
-        # Добавляем вкладки для каждой функции
-        self.tabs.addTab(self.create_search_tab(), "Поиск статей")
-        self.tabs.addTab(self.create_summary_tab(), "Краткое содержание")
-        self.tabs.addTab(self.create_references_tab(), "Поиск источников")
-        self.tabs.addTab(self.create_library_tab(), "Моя библиотека")
-        
-        main_layout.addWidget(self.tabs)
-        
-        # Добавляем статус-бар
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Готов к работе")
-        
-        # Создаем меню
-        self.create_menu()
-        
-    def create_menu(self):
-        """Создает главное меню приложения."""
-        menu_bar = self.menuBar()
-        
-        # Меню "Файл"
-        file_menu = menu_bar.addMenu("Файл")
-        
-        # Действие "Настройки"
-        settings_action = file_menu.addAction("Настройки")
-        settings_action.triggered.connect(self.show_settings)
-        
-        # Действие "Выход"
-        exit_action = file_menu.addAction("Выход")
-        exit_action.triggered.connect(self.close)
-    
-    def show_settings(self):
-        """Показывает диалог настроек."""
-        dialog = SettingsDialog(self)
-        dialog.exec()
-    
-    def settings_changed(self):
-        """Обработчик изменения настроек."""
-        self.status_bar.showMessage("Настройки сохранены. Перезапустите приложение для применения изменений.")
-    
+        layout = QVBoxLayout(central_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Применяем стили
+        self.setStyleSheet(MAIN_STYLE)
+
+        # Создание панели инструментов
+        toolbar = QToolBar()
+        toolbar.setMovable(False)
+        toolbar.setStyleSheet("""
+            QToolBar {
+                background: white;
+                border-bottom: 1px solid #EEEEEE;
+                spacing: 8px;
+                padding: 4px;
+            }
+        """)
+        self.addToolBar(toolbar)
+
+        # Кнопка настроек
+        settings_button = QToolButton()
+        settings_button.setIcon(QIcon("ui/icons/settings.svg"))
+        settings_button.setToolTip("Настройки")
+        settings_button.clicked.connect(self.show_settings)
+        settings_button.setStyleSheet("""
+            QToolButton {
+                border: none;
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QToolButton:hover {
+                background: #F5F5F5;
+            }
+            QToolButton:pressed {
+                background: #E0E0E0;
+            }
+        """)
+        toolbar.addWidget(settings_button)
+
+        # Создание вкладок
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                border: none;
+                background: white;
+            }
+            QTabWidget::tab-bar {
+                alignment: left;
+            }
+            QTabBar::tab {
+                background: #f0f0f0;
+                color: #666666;
+                padding: 8px 16px;
+                border: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                margin-right: 2px;
+                min-width: 120px;
+            }
+            QTabBar::tab:selected {
+                background: white;
+                color: #2196F3;
+                border-bottom: 2px solid #2196F3;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #e0e0e0;
+                color: #333333;
+            }
+            QTabBar::tab:selected:hover {
+                color: #1976D2;
+            }
+        """)
+        layout.addWidget(self.tab_widget)
+
+        # Добавление вкладок
+        self.tab_widget.addTab(
+            self.create_search_tab(),
+            QIcon("ui/icons/search-tab.svg"),
+            "Поиск статей"
+        )
+        self.tab_widget.addTab(
+            self.create_summary_tab(),
+            QIcon("ui/icons/summary-tab.svg"),
+            "Краткое содержание"
+        )
+        self.tab_widget.addTab(
+            self.create_references_tab(),
+            QIcon("ui/icons/references-tab.svg"),
+            "Поиск источников"
+        )
+        self.tab_widget.addTab(
+            self.create_library_tab(),
+            QIcon("ui/icons/library-tab.svg"),
+            "Моя библиотека"
+        )
+
+        # Создание строки состояния
+        self.statusBar().setStyleSheet("""
+            QStatusBar {
+                background: white;
+                color: #666666;
+                padding: 4px 8px;
+                font-size: 13px;
+            }
+        """)
+        self.statusBar().showMessage("Готов к работе")
+
     def create_search_tab(self):
-        """Создает вкладку для поиска статей."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        
-        # Верхняя панель с виджетами поиска
-        top_layout = QHBoxLayout()
-        
-        # Выбор источника данных
-        source_label = QLabel("Источник:")
-        self.source_combo = QComboBox()
-        
-        # Получаем доступные источники данных
-        available_sources = self.scholar_service.get_available_sources()
-        for source in available_sources:
-            self.source_combo.addItem(source["name"], source["id"])
-        
+        """Создает вкладку поиска."""
+        search_tab = QWidget()
+        layout = QVBoxLayout(search_tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Создаем панель поиска
+        search_panel = QWidget()
+        search_panel.setObjectName("searchPanel")
+        search_layout = QVBoxLayout(search_panel)
+        search_layout.setContentsMargins(20, 20, 20, 20)
+        search_layout.setSpacing(20)
+
+        # Контейнер для поиска
+        search_container = QWidget()
+        search_container.setObjectName("searchContainer")
+        search_container.setStyleSheet("""
+            QWidget#searchContainer {
+                background: white;
+                border: 2px solid #E0E0E0;
+                border-radius: 8px;
+                padding: 8px;
+            }
+            QWidget#searchContainer:focus-within {
+                border: 2px solid #2196F3;
+                background: white;
+            }
+        """)
+        search_container_layout = QHBoxLayout(search_container)
+        search_container_layout.setContentsMargins(8, 8, 8, 8)
+        search_container_layout.setSpacing(10)
+
+        # Иконка поиска
+        search_icon = QLabel()
+        search_icon.setPixmap(QIcon("ui/icons/search.svg").pixmap(QSize(20, 20)))
+        search_icon.setStyleSheet("QLabel { padding: 0; margin: 0; background: transparent; }")
+        search_container_layout.addWidget(search_icon)
+
         # Поле поиска
-        search_label = QLabel("Тема исследования:")
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Введите ключевые слова или тему...")
-        self.search_button = QPushButton("Найти")
-        self.search_button.clicked.connect(self.search_articles)
-        
-        # Добавляем виджеты в верхний макет
-        top_layout.addWidget(source_label)
-        top_layout.addWidget(self.source_combo)
-        top_layout.addWidget(search_label)
-        top_layout.addWidget(self.search_input, 1)
-        top_layout.addWidget(self.search_button)
-        
-        # Список результатов
-        results_label = QLabel("Результаты поиска:")
+        self.search_input.setPlaceholderText("Поиск...")
+        self.search_input.setFixedWidth(300)
+        self.search_input.returnPressed.connect(self.search_articles)
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                border: none;
+                background: transparent;
+                font-size: 14px;
+                padding: 6px;
+                color: #333333;
+            }
+            QLineEdit:focus {
+                background: transparent;
+            }
+        """)
+        search_container_layout.addWidget(self.search_input)
+
+        # Фильтры поиска
+        filters_layout = QHBoxLayout()
+        filters_layout.setSpacing(8)
+
+        # Фильтр по типу поиска
+        self.search_type = QComboBox()
+        self.search_type.addItems(["Везде", "Заголовок", "Аннотация", "Автор", "Категория"])
+        self.search_type.setFixedWidth(120)
+        self.search_type.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #E0E0E0;
+                border-radius: 4px;
+                padding: 4px 8px;
+                background: white;
+                color: #333333;
+            }
+            QComboBox:hover {
+                border-color: #2196F3;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: url(ui/icons/down-arrow.svg);
+                width: 12px;
+                height: 12px;
+            }
+        """)
+        filters_layout.addWidget(self.search_type)
+
+        # Фильтр по дате
+        self.date_filter = QComboBox()
+        self.date_filter.addItems(["Любая дата", "За неделю", "За месяц", "За год"])
+        self.date_filter.setFixedWidth(120)
+        self.date_filter.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #E0E0E0;
+                border-radius: 4px;
+                padding: 4px 8px;
+                background: white;
+                color: #333333;
+            }
+            QComboBox:hover {
+                border-color: #2196F3;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: url(ui/icons/down-arrow.svg);
+                width: 12px;
+                height: 12px;
+            }
+        """)
+        filters_layout.addWidget(self.date_filter)
+
+        # Фильтр по сортировке
+        self.sort_filter = QComboBox()
+        self.sort_filter.addItems(["По релевантности", "По дате", "По цитируемости"])
+        self.sort_filter.setFixedWidth(140)
+        self.sort_filter.setStyleSheet("""
+            QComboBox {
+                border: 1px solid #E0E0E0;
+                border-radius: 4px;
+                padding: 4px 8px;
+                background: white;
+                color: #333333;
+            }
+            QComboBox:hover {
+                border-color: #2196F3;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: url(ui/icons/down-arrow.svg);
+                width: 12px;
+                height: 12px;
+            }
+        """)
+        filters_layout.addWidget(self.sort_filter)
+
+        search_container_layout.addLayout(filters_layout)
+
+        # Кнопка поиска
+        search_button = QPushButton()
+        search_button.setIcon(QIcon("ui/icons/search.svg"))
+        search_button.setToolTip("Поиск")
+        search_button.clicked.connect(self.search_articles)
+        search_button.setStyleSheet("""
+            QPushButton {
+                background: #2196F3;
+                border-radius: 4px;
+                padding: 6px;
+                min-width: 32px;
+                min-height: 32px;
+            }
+            QPushButton:hover {
+                background: #1976D2;
+            }
+            QPushButton:pressed {
+                background: #0D47A1;
+            }
+        """)
+        search_container_layout.addWidget(search_button)
+
+        search_layout.addWidget(search_container)
+
+        # Добавляем панель поиска в основной layout
+        layout.addWidget(search_panel)
+
+        # Создаем сплиттер для результатов и деталей
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+
+        # Панель результатов
+        results_panel = QWidget()
+        results_layout = QVBoxLayout(results_panel)
+        results_layout.setContentsMargins(20, 20, 20, 20)
+        results_layout.setSpacing(20)
+
+        results_label = QLabel("Результаты поиска")
+        results_label.setStyleSheet("font-weight: bold; font-size: 16px;")
+        results_layout.addWidget(results_label)
+
+        # Список результатов поиска
         self.results_list = QListWidget()
-        self.results_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        
-        # Панель информации о выбранной статье
-        info_layout = QVBoxLayout()
-        info_label = QLabel("Информация о статье:")
+        self.results_list.itemClicked.connect(self.show_article_info)
+        self.results_list.setStyleSheet("""
+            QListWidget {
+                border: 1px solid #E0E0E0;
+                border-radius: 8px;
+                background: white;
+                padding: 8px;
+            }
+            QListWidget::item {
+                border-bottom: 1px solid #EEEEEE;
+                padding: 12px;
+                margin: 2px 4px;
+                border-radius: 4px;
+                background: #F8F9FA;
+                color: #333333;
+            }
+            QListWidget::item:last {
+                border-bottom: none;
+            }
+            QListWidget::item:selected {
+                background: #E3F2FD;
+                color: #1565C0;
+                border: 1px solid #90CAF9;
+            }
+            QListWidget::item:hover:!selected {
+                background: #F5F5F5;
+                border: 1px solid #E0E0E0;
+                color: #1565C0;
+            }
+        """)
+        results_layout.addWidget(self.results_list)
+
+        splitter.addWidget(results_panel)
+
+        # Панель деталей
+        details_panel = QWidget()
+        details_layout = QVBoxLayout(details_panel)
+        details_layout.setContentsMargins(20, 20, 20, 20)
+        details_layout.setSpacing(20)
+
+        details_label = QLabel("Информация о статье")
+        details_label.setStyleSheet("font-weight: bold; font-size: 16px;")
+        details_layout.addWidget(details_label)
+
         self.article_info = QTextEdit()
         self.article_info.setReadOnly(True)
-        info_layout.addWidget(info_label)
-        info_layout.addWidget(self.article_info)
-        
-        # Связываем выбор статьи с отображением информации
-        self.results_list.currentRowChanged.connect(self.show_article_info)
-        
+        self.article_info.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #BDBDBD;
+                border-radius: 4px;
+                background: white;
+                padding: 16px;
+                font-size: 14px;
+                line-height: 1.6;
+                color: #333333;
+            }
+        """)
+        details_layout.addWidget(self.article_info)
+
         # Кнопки действий
-        action_layout = QHBoxLayout()
-        self.add_to_library_btn = QPushButton("Добавить в библиотеку")
-        self.add_to_library_btn.clicked.connect(self.add_to_library)
-        
-        self.show_references_btn = QPushButton("Показать источники")
-        self.show_references_btn.clicked.connect(self.show_references)
-        self.show_references_btn.setEnabled(False)  # Будет активна только для статей из Semantic Scholar
-        
-        self.show_citations_btn = QPushButton("Показать цитирования")
-        self.show_citations_btn.clicked.connect(self.show_citations)
-        self.show_citations_btn.setEnabled(False)  # Будет активна только для статей из Semantic Scholar
-        
-        action_layout.addWidget(self.add_to_library_btn)
-        action_layout.addWidget(self.show_references_btn)
-        action_layout.addWidget(self.show_citations_btn)
-        
-        # Добавляем все на вкладку
-        layout.addLayout(top_layout)
-        layout.addWidget(results_label)
-        layout.addWidget(self.results_list)
-        layout.addLayout(info_layout)
-        layout.addLayout(action_layout)
-        
-        return tab
+        actions_layout = QHBoxLayout()
+        actions_layout.setSpacing(10)
+
+        # Кнопка скачивания PDF
+        download_button = QPushButton()
+        download_button.setIcon(QIcon("ui/icons/download.svg"))
+        download_button.setToolTip("Скачать PDF")
+        download_button.clicked.connect(self.download_article)
+        download_button.setStyleSheet("""
+            QPushButton {
+                background: #4CAF50;
+                border-radius: 4px;
+                padding: 6px;
+                min-width: 32px;
+                min-height: 32px;
+            }
+            QPushButton:hover {
+                background: #388E3C;
+            }
+            QPushButton:pressed {
+                background: #1B5E20;
+            }
+        """)
+        actions_layout.addWidget(download_button)
+
+        summary_button = QPushButton()
+        summary_button.setIcon(QIcon("ui/icons/summary.svg"))
+        summary_button.setToolTip("Создать краткое содержание")
+        summary_button.clicked.connect(self.create_summary)
+        actions_layout.addWidget(summary_button)
+
+        refs_button = QPushButton()
+        refs_button.setIcon(QIcon("ui/icons/references.svg"))
+        refs_button.setToolTip("Найти источники")
+        refs_button.clicked.connect(self.find_references)
+        actions_layout.addWidget(refs_button)
+
+        save_button = QPushButton()
+        save_button.setIcon(QIcon("ui/icons/save.svg"))
+        save_button.setToolTip("Сохранить в библиотеку")
+        save_button.clicked.connect(self.save_article)
+        actions_layout.addWidget(save_button)
+
+        actions_layout.addStretch()
+        details_layout.addLayout(actions_layout)
+
+        splitter.addWidget(details_panel)
+
+        # Устанавливаем соотношение размеров панелей
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+
+        layout.addWidget(splitter)
+        return search_tab
     
     def create_summary_tab(self):
-        """Создает вкладку для генерации краткого содержания."""
+        """Создает вкладку с кратким содержанием."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        
-        # Верхняя панель с кнопками загрузки
-        top_layout = QHBoxLayout()
-        
-        load_btn = QPushButton("Загрузить статью")
-        load_btn.clicked.connect(self.load_article_for_summary)
-        
-        use_selected_btn = QPushButton("Использовать выбранную")
-        use_selected_btn.clicked.connect(self.use_selected_article_for_summary)
-        
-        generate_btn = QPushButton("Сгенерировать резюме")
-        generate_btn.clicked.connect(self.generate_summary)
-        
-        top_layout.addWidget(load_btn)
-        top_layout.addWidget(use_selected_btn)
-        top_layout.addWidget(generate_btn)
-        
-        # Разделитель для текста статьи и резюме
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        
-        # Панель с текстом статьи
-        article_widget = QWidget()
-        article_layout = QVBoxLayout(article_widget)
-        article_layout.addWidget(QLabel("Текст статьи:"))
-        self.article_text = QTextEdit()
-        self.article_text.setReadOnly(True)
-        article_layout.addWidget(self.article_text)
-        
-        # Панель с результатами
-        summary_widget = QWidget()
-        summary_layout = QVBoxLayout(summary_widget)
-        summary_layout.addWidget(QLabel("Краткое содержание:"))
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(16)
+
+        # Заголовок
+        title_label = QLabel("Краткое содержание")
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 20px;
+                font-weight: bold;
+                color: #333333;
+            }
+        """)
+        layout.addWidget(title_label)
+
+        # Описание
+        description = QLabel(
+            "Здесь вы можете создать краткое содержание статьи с помощью искусственного интеллекта. "
+            "Выберите статью на вкладке поиска и нажмите кнопку 'Создать краткое содержание'."
+        )
+        description.setWordWrap(True)
+        description.setStyleSheet("""
+            QLabel {
+                color: #666666;
+                font-size: 14px;
+                line-height: 1.5;
+            }
+        """)
+        layout.addWidget(description)
+
+        # Текстовое поле для краткого содержания
         self.summary_text = QTextEdit()
         self.summary_text.setReadOnly(True)
-        summary_layout.addWidget(self.summary_text)
-        
-        splitter.addWidget(article_widget)
-        splitter.addWidget(summary_widget)
-        
-        # Добавляем все на вкладку
-        layout.addLayout(top_layout)
-        layout.addWidget(splitter)
-        
+        self.summary_text.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #BDBDBD;
+                border-radius: 4px;
+                background: white;
+                padding: 16px;
+                font-size: 14px;
+                line-height: 1.6;
+                color: #333333;
+            }
+        """)
+        layout.addWidget(self.summary_text)
+
+        # Панель действий
+        actions_panel = QWidget()
+        actions_layout = QHBoxLayout(actions_panel)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(8)
+
+        # Кнопка копирования
+        copy_button = QPushButton()
+        copy_button.setIcon(QIcon("ui/icons/copy.svg"))
+        copy_button.setToolTip("Копировать в буфер обмена")
+        copy_button.clicked.connect(self.copy_summary)
+        copy_button.setFixedSize(40, 40)
+        copy_button.setStyleSheet("""
+            QPushButton {
+                background: #2196F3;
+                border-radius: 20px;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background: #1976D2;
+            }
+            QPushButton:pressed {
+                background: #0D47A1;
+            }
+        """)
+        actions_layout.addWidget(copy_button)
+
+        # Кнопка сохранения
+        save_button = QPushButton()
+        save_button.setIcon(QIcon("ui/icons/save.svg"))
+        save_button.setToolTip("Сохранить в файл")
+        save_button.clicked.connect(self.save_summary)
+        save_button.setFixedSize(40, 40)
+        save_button.setStyleSheet("""
+            QPushButton {
+                background: #2196F3;
+                border-radius: 20px;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background: #1976D2;
+            }
+            QPushButton:pressed {
+                background: #0D47A1;
+            }
+        """)
+        actions_layout.addWidget(save_button)
+
+        actions_layout.addStretch()
+        layout.addWidget(actions_panel)
+
         return tab
-    
+
+    def copy_summary(self):
+        """Копирует краткое содержание в буфер обмена."""
+        text = self.summary_text.toPlainText()
+        if text:
+            clipboard = QApplication.clipboard()
+            clipboard.setText(text)
+            self.statusBar().showMessage("Краткое содержание скопировано в буфер обмена")
+        else:
+            self.statusBar().showMessage("Нет краткого содержания для копирования")
+
+    def save_summary(self):
+        """Сохраняет краткое содержание в файл."""
+        text = self.summary_text.toPlainText()
+        if not text:
+            self.statusBar().showMessage("Нет краткого содержания для сохранения")
+            return
+
+        file_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить краткое содержание",
+            "",
+            "Текстовые файлы (*.txt);;Все файлы (*.*)"
+        )
+
+        if file_name:
+            try:
+                with open(file_name, 'w', encoding='utf-8') as f:
+                    f.write(text)
+                self.statusBar().showMessage("Краткое содержание сохранено в файл")
+            except Exception as e:
+                self.statusBar().showMessage(f"Ошибка при сохранении файла: {str(e)}")
+
     def create_references_tab(self):
-        """Создает вкладку для поиска источников."""
+        """Создает вкладку с источниками."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        
-        # Верхняя панель с кнопками загрузки
-        top_layout = QHBoxLayout()
-        
-        load_btn = QPushButton("Загрузить статью")
-        load_btn.clicked.connect(self.load_article_for_refs)
-        
-        use_selected_btn = QPushButton("Использовать выбранную")
-        use_selected_btn.clicked.connect(self.use_selected_article_for_refs)
-        
-        find_refs_btn = QPushButton("Найти источники")
-        find_refs_btn.clicked.connect(self.find_references)
-        
-        # Выбор метода поиска источников
-        method_label = QLabel("Метод:")
-        self.refs_method_combo = QComboBox()
-        self.refs_method_combo.addItem("Анализ текста (ИИ)", "ai")
-        self.refs_method_combo.addItem("Метаданные API (если доступно)", "api")
-        
-        top_layout.addWidget(load_btn)
-        top_layout.addWidget(use_selected_btn)
-        top_layout.addWidget(method_label)
-        top_layout.addWidget(self.refs_method_combo)
-        top_layout.addWidget(find_refs_btn)
-        
-        # Разделитель для текста статьи и найденных источников
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        
-        # Панель с текстом статьи
-        article_widget = QWidget()
-        article_layout = QVBoxLayout(article_widget)
-        article_layout.addWidget(QLabel("Текст статьи:"))
-        self.refs_article_text = QTextEdit()
-        self.refs_article_text.setReadOnly(True)
-        article_layout.addWidget(self.refs_article_text)
-        
-        # Панель с результатами
-        refs_widget = QWidget()
-        refs_layout = QVBoxLayout(refs_widget)
-        refs_layout.addWidget(QLabel("Найденные источники:"))
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(16)
+
+        # Заголовок
+        title_label = QLabel("Поиск источников")
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 20px;
+                font-weight: bold;
+                color: #333333;
+            }
+        """)
+        layout.addWidget(title_label)
+
+        # Описание
+        description = QLabel(
+            "Здесь вы можете найти источники, цитируемые в статье. "
+            "Выберите статью на вкладке поиска и нажмите кнопку 'Найти источники'."
+        )
+        description.setWordWrap(True)
+        description.setStyleSheet("""
+            QLabel {
+                color: #666666;
+                font-size: 14px;
+                line-height: 1.5;
+            }
+        """)
+        layout.addWidget(description)
+
+        # Список источников
         self.references_list = QListWidget()
-        refs_layout.addWidget(self.references_list)
+        self.references_list.setStyleSheet("""
+            QListWidget {
+                border: 1px solid #E0E0E0;
+                border-radius: 8px;
+                background: white;
+                padding: 8px;
+            }
+            QListWidget::item {
+                border-bottom: 1px solid #EEEEEE;
+                padding: 12px;
+                margin: 2px 4px;
+                border-radius: 4px;
+                background: #F8F9FA;
+                color: #333333;
+            }
+            QListWidget::item:last {
+                border-bottom: none;
+            }
+            QListWidget::item:selected {
+                background: #E3F2FD;
+                color: #1565C0;
+                border: 1px solid #90CAF9;
+            }
+            QListWidget::item:hover:!selected {
+                background: #F5F5F5;
+                border: 1px solid #E0E0E0;
+                color: #1565C0;
+            }
+        """)
+        layout.addWidget(self.references_list)
+
+        # Панель действий
+        actions_panel = QWidget()
+        actions_layout = QHBoxLayout(actions_panel)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(8)
+
+        # Кнопка копирования
+        copy_button = QPushButton()
+        copy_button.setIcon(QIcon("ui/icons/copy.svg"))
+        copy_button.setToolTip("Копировать в буфер обмена")
+        copy_button.clicked.connect(self.copy_references)
+        copy_button.setFixedSize(40, 40)
+        copy_button.setStyleSheet("""
+            QPushButton {
+                background: #2196F3;
+                border-radius: 20px;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background: #1976D2;
+            }
+            QPushButton:pressed {
+                background: #0D47A1;
+            }
+        """)
+        actions_layout.addWidget(copy_button)
+
+        # Кнопка сохранения
+        save_button = QPushButton()
+        save_button.setIcon(QIcon("ui/icons/save.svg"))
+        save_button.setToolTip("Сохранить в файл")
+        save_button.clicked.connect(self.save_references)
+        save_button.setFixedSize(40, 40)
+        save_button.setStyleSheet("""
+            QPushButton {
+                background: #2196F3;
+                border-radius: 20px;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background: #1976D2;
+            }
+            QPushButton:pressed {
+                background: #0D47A1;
+            }
+        """)
+        actions_layout.addWidget(save_button)
+
+        actions_layout.addStretch()
+        layout.addWidget(actions_panel)
+
+        return tab
+
+    def copy_references(self):
+        """Копирует список источников в буфер обмена."""
+        items = []
+        for i in range(self.references_list.count()):
+            items.append(self.references_list.item(i).text())
         
-        splitter.addWidget(article_widget)
-        splitter.addWidget(refs_widget)
+        if items:
+            text = "\n".join(items)
+            clipboard = QApplication.clipboard()
+            clipboard.setText(text)
+            self.statusBar().showMessage("Список источников скопирован в буфер обмена")
+        else:
+            self.statusBar().showMessage("Нет источников для копирования")
+
+    def save_references(self):
+        """Сохраняет список источников в файл."""
+        items = []
+        for i in range(self.references_list.count()):
+            items.append(self.references_list.item(i).text())
         
-        # Добавляем все на вкладку
-        layout.addLayout(top_layout)
+        if not items:
+            self.statusBar().showMessage("Нет источников для сохранения")
+            return
+
+        file_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить список источников",
+            "",
+            "Текстовые файлы (*.txt);;Все файлы (*.*)"
+        )
+
+        if file_name:
+            try:
+                with open(file_name, 'w', encoding='utf-8') as f:
+                    f.write("\n".join(items))
+                self.statusBar().showMessage("Список источников сохранен в файл")
+            except Exception as e:
+                self.statusBar().showMessage(f"Ошибка при сохранении файла: {str(e)}")
+
+    def create_library_tab(self):
+        """Создает вкладку с библиотекой."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(16)
+
+        # Заголовок
+        title_label = QLabel("Моя библиотека")
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 20px;
+                font-weight: bold;
+                color: #333333;
+            }
+        """)
+        layout.addWidget(title_label)
+
+        # Описание
+        description = QLabel(
+            "Здесь хранятся сохраненные вами статьи. "
+            "Вы можете просматривать, редактировать и удалять статьи из библиотеки."
+        )
+        description.setWordWrap(True)
+        description.setStyleSheet("""
+            QLabel {
+                color: #666666;
+                font-size: 14px;
+                line-height: 1.5;
+            }
+        """)
+        layout.addWidget(description)
+
+        # Разделитель для списка и деталей
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # Панель со списком статей
+        list_panel = QWidget()
+        list_layout = QVBoxLayout(list_panel)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(8)
+
+        # Поле поиска
+        search_container = QWidget()
+        search_container.setFixedHeight(40)
+        search_container.setStyleSheet("""
+            QWidget {
+                background: #F5F5F5;
+                border: 1px solid #E0E0E0;
+                border-radius: 8px;
+            }
+            QWidget:focus-within {
+                border: 1px solid #2196F3;
+                background: white;
+            }
+        """)
+        container_layout = QHBoxLayout(search_container)
+        container_layout.setContentsMargins(12, 0, 12, 0)
+        container_layout.setSpacing(8)
+
+        # Иконка поиска
+        search_icon = QLabel()
+        search_icon.setPixmap(QIcon("ui/icons/search-tab.svg").pixmap(16, 16))
+        search_icon.setStyleSheet("border: none; background: transparent; padding: 0; margin: 0;")
+        container_layout.addWidget(search_icon)
+
+        # Поле поиска
+        self.library_search = QLineEdit()
+        self.library_search.setPlaceholderText("Поиск в библиотеке...")
+        self.library_search.textChanged.connect(self.filter_library)
+        self.library_search.setStyleSheet("""
+            QLineEdit {
+                border: none;
+                background: #F5F5F5;
+                font-size: 14px;
+                padding: 8px;
+                color: #333333;
+            }
+            QLineEdit:focus {
+                background: white;
+            }
+        """)
+        container_layout.addWidget(self.library_search)
+
+        list_layout.addWidget(search_container)
+
+        # Список статей
+        self.library_list = QListWidget()
+        self.library_list.itemClicked.connect(self.show_library_article)
+        self.library_list.setStyleSheet("""
+            QListWidget {
+                border: 1px solid #E0E0E0;
+                border-radius: 8px;
+                background: white;
+                padding: 8px;
+            }
+            QListWidget::item {
+                border-bottom: 1px solid #EEEEEE;
+                padding: 12px;
+                margin: 2px 4px;
+                border-radius: 4px;
+                background: #F8F9FA;
+                color: #333333;
+            }
+            QListWidget::item:last {
+                border-bottom: none;
+            }
+            QListWidget::item:selected {
+                background: #E3F2FD;
+                color: #1565C0;
+                border: 1px solid #90CAF9;
+            }
+            QListWidget::item:hover:!selected {
+                background: #F5F5F5;
+                border: 1px solid #E0E0E0;
+                color: #1565C0;
+            }
+        """)
+        list_layout.addWidget(self.library_list)
+
+        splitter.addWidget(list_panel)
+
+        # Панель с деталями статьи
+        details_panel = QWidget()
+        details_layout = QVBoxLayout(details_panel)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(8)
+
+        self.library_details = QTextEdit()
+        self.library_details.setReadOnly(True)
+        self.library_details.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #BDBDBD;
+                border-radius: 4px;
+                background: white;
+                padding: 16px;
+                font-size: 14px;
+                line-height: 1.6;
+                color: #333333;
+            }
+        """)
+        details_layout.addWidget(self.library_details)
+
+        # Панель действий
+        actions_panel = QWidget()
+        actions_layout = QHBoxLayout(actions_panel)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(8)
+
+        # Кнопка удаления
+        delete_button = QPushButton()
+        delete_button.setIcon(QIcon("ui/icons/delete.svg"))
+        delete_button.setToolTip("Удалить из библиотеки")
+        delete_button.clicked.connect(self.delete_from_library)
+        delete_button.setFixedSize(40, 40)
+        delete_button.setStyleSheet("""
+            QPushButton {
+                background: #F44336;
+                border-radius: 20px;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background: #D32F2F;
+            }
+            QPushButton:pressed {
+                background: #B71C1C;
+            }
+        """)
+        actions_layout.addWidget(delete_button)
+
+        # Кнопка экспорта
+        export_button = QPushButton()
+        export_button.setIcon(QIcon("ui/icons/export.svg"))
+        export_button.setToolTip("Экспортировать")
+        export_button.clicked.connect(self.export_article)
+        export_button.setFixedSize(40, 40)
+        export_button.setStyleSheet("""
+            QPushButton {
+                background: #2196F3;
+                border-radius: 20px;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background: #1976D2;
+            }
+            QPushButton:pressed {
+                background: #0D47A1;
+            }
+        """)
+        actions_layout.addWidget(export_button)
+
+        actions_layout.addStretch()
+        details_layout.addWidget(actions_panel)
+
+        splitter.addWidget(details_panel)
+
+        # Установка пропорций разделителя
+        splitter.setStretchFactor(0, 1)  # Список
+        splitter.setStretchFactor(1, 2)  # Детали
+
         layout.addWidget(splitter)
-        
         return tab
     
-    def create_library_tab(self):
-        """Создает вкладку для управления библиотекой."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        
-        # Верхняя панель с кнопками
-        top_layout = QHBoxLayout()
-        
-        category_label = QLabel("Категория:")
-        self.category_combo = QComboBox()
-        self.category_combo.addItem("Все")
-        self.category_combo.addItem("Избранное")
-        self.category_combo.addItem("Прочитанное")
-        self.category_combo.currentIndexChanged.connect(self.filter_library)
-        
-        export_btn = QPushButton("Экспорт")
-        export_btn.clicked.connect(self.export_library)
-        
-        delete_btn = QPushButton("Удалить")
-        delete_btn.clicked.connect(self.delete_from_library)
-        
-        top_layout.addWidget(category_label)
-        top_layout.addWidget(self.category_combo)
-        top_layout.addStretch()
-        top_layout.addWidget(export_btn)
-        top_layout.addWidget(delete_btn)
-        
-        # Список статей в библиотеке
-        self.library_list = QListWidget()
-        
-        # Добавляем все на вкладку
-        layout.addLayout(top_layout)
-        layout.addWidget(self.library_list)
-        
-        return tab
+    def filter_library(self):
+        """Фильтрует список статей в библиотеке."""
+        query = self.library_search.text().lower()
+        for i in range(self.library_list.count()):
+            item = self.library_list.item(i)
+            article = item.data(Qt.ItemDataRole.UserRole)
+            item.setHidden(
+                query not in article.title.lower() and
+                not any(query in author.lower() for author in article.authors)
+            )
+
+    def show_library_article(self, item):
+        """Отображает информацию о выбранной статье из библиотеки."""
+        article = item.data(Qt.ItemDataRole.UserRole)
+        if not article:
+            return
+
+        info = f"""<h2>{article.title}</h2>
+<p><b>Авторы:</b> {', '.join(article.authors)}</p>
+<p><b>Дата публикации:</b> {article.published.strftime('%d.%m.%Y')}</p>
+<p><b>DOI:</b> {article.doi or 'Не указан'}</p>
+<p><b>Категории:</b> {', '.join(article.categories)}</p>
+<h3>Аннотация</h3>
+<p>{article.summary}</p>
+"""
+        self.library_details.setHtml(info)
+        self.statusBar().showMessage(f"Выбрана статья: {article.title}")
+
+    def delete_from_library(self):
+        """Удаляет выбранную статью из библиотеки."""
+        item = self.library_list.currentItem()
+        if not item:
+            self.statusBar().showMessage("Выберите статью для удаления")
+            return
+
+        article = item.data(Qt.ItemDataRole.UserRole)
+        reply = QMessageBox.question(
+            self,
+            "Подтверждение удаления",
+            f"Вы действительно хотите удалить статью '{article.title}' из библиотеки?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            try:
+                self.storage_service.delete_article(article.id)
+                self.library_list.takeItem(self.library_list.row(item))
+                self.library_details.clear()
+                self.statusBar().showMessage("Статья удалена из библиотеки")
+            except Exception as e:
+                self.statusBar().showMessage(f"Ошибка при удалении статьи: {str(e)}")
+
+    def export_article(self):
+        """Экспортирует выбранную статью."""
+        item = self.library_list.currentItem()
+        if not item:
+            self.statusBar().showMessage("Выберите статью для экспорта")
+            return
+
+        article = item.data(Qt.ItemDataRole.UserRole)
+        file_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Экспорт статьи",
+            f"{article.title}.txt",
+            "Текстовые файлы (*.txt);;Все файлы (*.*)"
+        )
+
+        if file_name:
+            try:
+                with open(file_name, 'w', encoding='utf-8') as f:
+                    f.write(f"Название: {article.title}\n")
+                    f.write(f"Авторы: {', '.join(article.authors)}\n")
+                    f.write(f"Дата публикации: {article.published.strftime('%d.%m.%Y')}\n")
+                    f.write(f"DOI: {article.doi or 'Не указан'}\n")
+                    f.write(f"Категории: {', '.join(article.categories)}\n\n")
+                    f.write("Аннотация:\n")
+                    f.write(article.summary)
+                self.statusBar().showMessage("Статья экспортирована")
+            except Exception as e:
+                self.statusBar().showMessage(f"Ошибка при экспорте статьи: {str(e)}")
     
     # Слоты (методы обработки событий)
     def search_articles(self):
-        """Поиск статей по заданной теме."""
-        query = self.search_input.text()
+        """Выполняет поиск статей по запросу."""
+        query = self.search_input.text().strip()
         if not query:
-            self.status_bar.showMessage("Введите запрос для поиска")
+            self.statusBar().showMessage("Введите поисковый запрос")
             return
         
-        # Получаем выбранный источник
-        source = self.source_combo.currentData()
+        # Отключаем кнопку поиска и показываем статус
+        self.search_input.setEnabled(False)
+        self.results_list.clear()
+        self.article_info.clear()
+        self.statusBar().showMessage("Выполняется поиск...")
         
-        self.status_bar.showMessage(f"Поиск статей в {self.source_combo.currentText()}...")
-        
-        # Вызов сервиса для поиска
         try:
-            results = self.scholar_service.search_articles(query, source=source)
+            articles = self.arxiv_service.search_articles(query)
             
-            # Отображение результатов
-            self.results_list.clear()
-            for article in results:
-                # Используем свойство display_info для форматирования
-                self.results_list.addItem(article.display_info)
+            if not articles:
+                self.statusBar().showMessage("Статьи не найдены. Попробуйте изменить запрос.")
+                return
+                
+            for article in articles:
+                item = QListWidgetItem()
+                item.setText(f"{article.title}\nАвторы: {', '.join(article.authors)}")
+                item.setData(Qt.ItemDataRole.UserRole, article)
+                self.results_list.addItem(item)
             
-            self.status_bar.showMessage(f"Найдено статей: {len(results)}")
+            self.statusBar().showMessage(f"Найдено статей: {len(articles)}")
+            
         except Exception as e:
-            self.status_bar.showMessage(f"Ошибка при поиске: {str(e)}")
+            self.statusBar().showMessage(f"Ошибка при поиске: {str(e)}")
+        
+        finally:
+            # Включаем поле поиска обратно
+            self.search_input.setEnabled(True)
     
-    def show_article_info(self, row):
+    def show_article_info(self, item):
         """Отображает информацию о выбранной статье."""
-        if row < 0:
-            return
-            
-        article = self.scholar_service.get_article_by_index(row)
+        article = item.data(Qt.ItemDataRole.UserRole)
         if not article:
             return
         
-        # Формируем информацию о статье
-        info = f"<h2>{article.title}</h2>"
-        
-        # Авторы
-        authors = ", ".join([author.name for author in article.authors])
-        info += f"<p><b>Авторы:</b> {authors}</p>"
-        
-        # Год и журнал
-        if article.journal:
-            info += f"<p><b>Журнал:</b> {article.journal}, {article.year}</p>"
-        else:
-            info += f"<p><b>Год:</b> {article.year}</p>"
-        
-        # Источник данных
-        info += f"<p><b>Источник данных:</b> {article.source}</p>"
-        
-        # Статистика цитирования (если есть)
-        if article.citation_count > 0:
-            info += f"<p><b>Цитирований:</b> {article.citation_count}</p>"
-        
-        if article.reference_count > 0:
-            info += f"<p><b>Количество источников:</b> {article.reference_count}</p>"
-        
-        # URL (если есть)
-        if article.url:
-            info += f"<p><b>URL:</b> <a href='{article.url}'>{article.url}</a></p>"
-        
-        # Абстракт
-        if article.abstract:
-            info += f"<h3>Аннотация</h3><p>{article.abstract}</p>"
-        
-        # Отображаем информацию
+        info = f"""<h2>{article.title}</h2>
+<p><b>Авторы:</b> {', '.join(article.authors)}</p>
+<p><b>Дата публикации:</b> {article.published.strftime('%d.%m.%Y')}</p>
+<p><b>DOI:</b> {article.doi or 'Не указан'}</p>
+<p><b>Категории:</b> {', '.join(article.categories)}</p>
+<h3>Аннотация</h3>
+<p>{article.summary}</p>
+"""
         self.article_info.setHtml(info)
+        self.statusBar().showMessage(f"Выбрана статья: {article.title}")
+
+    def create_summary(self):
+        """Создает краткое содержание выбранной статьи."""
+        item = self.results_list.currentItem()
+        if not item:
+            self.statusBar().showMessage("Выберите статью для создания краткого содержания")
+            return
+
+        article = item.data(Qt.ItemDataRole.UserRole)
+        self.statusBar().showMessage("Создание краткого содержания...")
         
-        # Активируем кнопки только для Semantic Scholar
-        has_semantic_scholar = article.source.lower() == "semantic_scholar" and hasattr(article, 'paper_id') and article.paper_id
-        self.show_references_btn.setEnabled(has_semantic_scholar)
-        self.show_citations_btn.setEnabled(has_semantic_scholar)
+        try:
+            summary = self.ai_service.create_summary(article)
+            self.tab_widget.setCurrentIndex(1)  # Переключаемся на вкладку с кратким содержанием
+            self.summary_text.setPlainText(summary)
+            self.statusBar().showMessage("Краткое содержание создано")
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка при создании краткого содержания: {str(e)}")
+
+    def find_references(self):
+        """Ищет источники для выбранной статьи."""
+        item = self.results_list.currentItem()
+        if not item:
+            self.statusBar().showMessage("Выберите статью для поиска источников")
+            return
+
+        article = item.data(Qt.ItemDataRole.UserRole)
+        self.statusBar().showMessage("Поиск источников...")
+        
+        try:
+            references = self.ai_service.find_references(article)
+            self.tab_widget.setCurrentIndex(2)  # Переключаемся на вкладку с источниками
+            self.references_list.clear()
+            for ref in references:
+                self.references_list.addItem(ref)
+            self.statusBar().showMessage(f"Найдено источников: {len(references)}")
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка при поиске источников: {str(e)}")
+
+    def save_article(self):
+        """Сохраняет выбранную статью в библиотеку."""
+        item = self.results_list.currentItem()
+        if not item:
+            self.statusBar().showMessage("Выберите статью для сохранения")
+            return
+
+        article = item.data(Qt.ItemDataRole.UserRole)
+        self.statusBar().showMessage("Сохранение статьи...")
+        
+        try:
+            self.storage_service.add_article(article)
+            self.statusBar().showMessage("Статья сохранена в библиотеку")
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка при сохранении статьи: {str(e)}")
     
     def load_article_for_summary(self):
-        """Загружает статью из файла для генерации резюме."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Открыть файл статьи", "", "PDF Files (*.pdf);;Text Files (*.txt);;All Files (*)"
-        )
+        """Загружает статью из файла для создания резюме."""
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+                    self,
+                    "Выберите файл статьи",
+                    "",
+                    "Текстовые файлы (*.txt);;PDF файлы (*.pdf);;Все файлы (*.*)"
+            )
         
-        if file_path:
-            try:
+            if file_path:
                 text = self.storage_service.load_file(file_path)
                 self.article_text.setText(text)
-                self.status_bar.showMessage(f"Статья загружена: {file_path}")
-            except Exception as e:
-                self.status_bar.showMessage(f"Ошибка при загрузке файла: {str(e)}")
+                self.statusBar().showMessage(f"Статья загружена: {file_path}")
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка при загрузке файла: {str(e)}")
     
     def use_selected_article_for_summary(self):
         """Использует выбранную статью из результатов поиска для генерации резюме."""
         selected_items = self.results_list.selectedItems()
         if not selected_items:
-            self.status_bar.showMessage("Выберите статью из результатов поиска")
+            self.statusBar().showMessage("Выберите статью из результатов поиска")
             return
         
-        # Получение выбранной статьи
-        selected_index = self.results_list.row(selected_items[0])
-        article = self.scholar_service.get_article_by_index(selected_index)
-        
         try:
-            # Загрузка полного текста
-            text = self.scholar_service.get_article_text(article)
+            row = self.results_list.row(selected_items[0])
+            article = self.arxiv_service.get_article_by_index(row)
+            
+            # Загружаем текст статьи
+            text = self.arxiv_service.get_article_text(article)
             self.article_text.setText(text)
-            self.status_bar.showMessage("Статья загружена")
+            self.statusBar().showMessage("Статья загружена")
+            
+            # Переключаемся на вкладку резюме
+            self.tab_widget.setCurrentIndex(1)
         except Exception as e:
-            self.status_bar.showMessage(f"Ошибка при загрузке статьи: {str(e)}")
+            self.statusBar().showMessage(f"Ошибка при загрузке статьи: {str(e)}")
     
     def generate_summary(self):
         """Генерирует краткое содержание для загруженной статьи."""
         text = self.article_text.toPlainText()
         if not text:
-            self.status_bar.showMessage("Сначала загрузите статью")
+            self.statusBar().showMessage("Сначала загрузите статью")
             return
         
-        self.status_bar.showMessage("Генерация резюме...")
+        self.statusBar().showMessage("Генерация резюме...")
         
         try:
             summary = self.ai_service.generate_summary(text)
             self.summary_text.setText(summary)
-            self.status_bar.showMessage("Резюме сгенерировано")
+            self.statusBar().showMessage("Резюме сгенерировано")
         except Exception as e:
-            self.status_bar.showMessage(f"Ошибка при генерации резюме: {str(e)}")
+            self.statusBar().showMessage(f"Ошибка при генерации резюме: {str(e)}")
     
     def load_article_for_refs(self):
         """Загружает статью из файла для поиска источников."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Открыть файл статьи", "", "PDF Files (*.pdf);;Text Files (*.txt);;All Files (*)"
-        )
-        
-        if file_path:
-            try:
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+                    self,
+                    "Выберите файл статьи",
+                    "",
+                    "Текстовые файлы (*.txt);;PDF файлы (*.pdf);;Все файлы (*.*)"
+            )
+
+            if file_path:
                 text = self.storage_service.load_file(file_path)
                 self.refs_article_text.setText(text)
-                self.status_bar.showMessage(f"Статья загружена: {file_path}")
-            except Exception as e:
-                self.status_bar.showMessage(f"Ошибка при загрузке файла: {str(e)}")
+                self.statusBar().showMessage(f"Статья загружена: {file_path}")
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка при загрузке файла: {str(e)}")
     
     def use_selected_article_for_refs(self):
         """Использует выбранную статью из результатов поиска для поиска источников."""
         selected_items = self.results_list.selectedItems()
         if not selected_items:
-            self.status_bar.showMessage("Выберите статью из результатов поиска")
+            self.statusBar().showMessage("Выберите статью из результатов поиска")
             return
         
-        # Получение выбранной статьи
-        selected_index = self.results_list.row(selected_items[0])
-        article = self.scholar_service.get_article_by_index(selected_index)
-        
         try:
-            # Загрузка полного текста
-            text = self.scholar_service.get_article_text(article)
-            self.refs_article_text.setText(text)
+            row = self.results_list.row(selected_items[0])
+            article = self.arxiv_service.get_article_by_index(row)
             
-            # Сохраняем ID статьи для возможного использования API
+            # Загружаем текст статьи
+            text = self.arxiv_service.get_article_text(article)
+            self.refs_article_text.setText(text)
             self.refs_article_text.setProperty("article", article)
             
-            self.status_bar.showMessage("Статья загружена")
+            self.statusBar().showMessage("Статья загружена")
+            
+            # Переключаемся на вкладку источников
+            self.tab_widget.setCurrentIndex(2)
         except Exception as e:
-            self.status_bar.showMessage(f"Ошибка при загрузке статьи: {str(e)}")
-    
-    def find_references(self):
-        """Ищет источники для загруженной статьи."""
-        text = self.refs_article_text.toPlainText()
-        if not text:
-            self.status_bar.showMessage("Сначала загрузите статью")
-            return
-        
-        # Определяем метод поиска
-        method = self.refs_method_combo.currentData()
-        
-        # Получаем статью, если она была сохранена в свойствах
-        article = self.refs_article_text.property("article")
-        
-        self.status_bar.showMessage("Поиск источников...")
-        
-        try:
-            references = []
-            
-            if method == "api" and article and hasattr(article, "paper_id") and article.source == "Semantic Scholar":
-                # Используем API для получения источников
-                references = self.scholar_service.get_references(article)
-                self.status_bar.showMessage(f"Источники получены через API")
-            else:
-                # Используем ИИ для анализа текста
-                references = self.ai_service.find_references(text)
-                self.status_bar.showMessage(f"Источники найдены с помощью ИИ")
-            
-            # Отображение результатов
-            self.references_list.clear()
-            for ref in references:
-                # Используем свойство display_info для форматирования
-                item_text = ref.display_info
-                if hasattr(ref, "confidence") and ref.confidence > 0:
-                    item_text += f" [уверенность: {ref.confidence:.1%}]"
-                self.references_list.addItem(item_text)
-            
-            self.status_bar.showMessage(f"Найдено источников: {len(references)}")
-        except Exception as e:
-            self.status_bar.showMessage(f"Ошибка при поиске источников: {str(e)}")
-    
-    def show_references(self):
-        """Показывает источники для выбранной статьи."""
-        # Получаем выбранную статью
-        selected_items = self.results_list.selectedItems()
-        if not selected_items:
-            self.status_bar.showMessage("Выберите статью из результатов поиска")
-            return
-        
-        selected_index = self.results_list.row(selected_items[0])
-        article = self.scholar_service.get_article_by_index(selected_index)
-        
-        if not article:
-            self.status_bar.showMessage("Выбранная статья недоступна")
-            return
-        
-        # Проверяем, что у статьи есть paperId
-        if not (hasattr(article, 'paper_id') and article.paper_id):
-            self.status_bar.showMessage("У этой статьи нет идентификатора для получения источников")
-            return
-        
-        try:
-            # Получаем источники
-            self.status_bar.showMessage(f"Получение источников для '{article.title}'...")
-            references = self.scholar_service.get_references(article)
-            
-            # Создаем диалоговое окно для отображения источников
-            dialog = QDialog(self)
-            dialog.setWindowTitle(f"Источники для '{article.title}'")
-            dialog.setMinimumSize(800, 600)
-            
-            # Создаем макет и виджеты
-            layout = QVBoxLayout(dialog)
-            label = QLabel(f"Источники для статьи: <b>{article.title}</b> ({len(references)} найдено)")
-            layout.addWidget(label)
-            
-            # Список источников
-            refs_list = QListWidget()
-            for ref in references:
-                # Используем свойство display_info для форматирования
-                refs_list.addItem(ref.display_info)
-            
-            layout.addWidget(refs_list)
-            
-            # Кнопка закрытия
-            close_btn = QPushButton("Закрыть")
-            close_btn.clicked.connect(dialog.accept)
-            layout.addWidget(close_btn)
-            
-            # Показываем диалог
-            dialog.exec()
-            
-            self.status_bar.showMessage(f"Найдено {len(references)} источников")
-            
-        except Exception as e:
-            self.status_bar.showMessage(f"Ошибка при получении источников: {str(e)}")
-            
-    def show_citations(self):
-        """Показывает цитирования для выбранной статьи."""
-        # Получаем выбранную статью
-        selected_items = self.results_list.selectedItems()
-        if not selected_items:
-            self.status_bar.showMessage("Выберите статью из результатов поиска")
-            return
-        
-        selected_index = self.results_list.row(selected_items[0])
-        article = self.scholar_service.get_article_by_index(selected_index)
-        
-        if not article:
-            self.status_bar.showMessage("Выбранная статья недоступна")
-            return
-        
-        # Проверяем, что у статьи есть paperId
-        if not (hasattr(article, 'paper_id') and article.paper_id):
-            self.status_bar.showMessage("У этой статьи нет идентификатора для получения цитирований")
-            return
-        
-        try:
-            # Получаем цитирования
-            self.status_bar.showMessage(f"Получение цитирований для '{article.title}'...")
-            citations = self.scholar_service.get_citations(article)
-            
-            # Создаем диалоговое окно для отображения цитирований
-            dialog = QDialog(self)
-            dialog.setWindowTitle(f"Цитирования для '{article.title}'")
-            dialog.setMinimumSize(800, 600)
-            
-            # Создаем макет и виджеты
-            layout = QVBoxLayout(dialog)
-            label = QLabel(f"Статьи, цитирующие: <b>{article.title}</b> ({len(citations)} найдено)")
-            layout.addWidget(label)
-            
-            # Список цитирований
-            citations_list = QListWidget()
-            for citation in citations:
-                # Используем свойство display_info для форматирования
-                citations_list.addItem(citation.display_info)
-            
-            layout.addWidget(citations_list)
-            
-            # Кнопка закрытия
-            close_btn = QPushButton("Закрыть")
-            close_btn.clicked.connect(dialog.accept)
-            layout.addWidget(close_btn)
-            
-            # Показываем диалог
-            dialog.exec()
-            
-            self.status_bar.showMessage(f"Найдено {len(citations)} цитирований")
-            
-        except Exception as e:
-            self.status_bar.showMessage(f"Ошибка при получении цитирований: {str(e)}")
+            self.statusBar().showMessage(f"Ошибка при загрузке статьи: {str(e)}")
     
     def add_to_library(self):
         """Добавляет выбранную статью в библиотеку."""
         selected_items = self.results_list.selectedItems()
         if not selected_items:
-            self.status_bar.showMessage("Выберите статью для добавления в библиотеку")
+            self.statusBar().showMessage("Выберите статью для добавления в библиотеку")
             return
         
-        # Получение выбранной статьи
-        selected_index = self.results_list.row(selected_items[0])
-        article = self.scholar_service.get_article_by_index(selected_index)
-        
         try:
+            row = self.results_list.row(selected_items[0])
+            article = self.arxiv_service.get_article_by_index(row)
+            
             # Добавляем статью в библиотеку
             if self.storage_service.add_article(article):
-                self.status_bar.showMessage(f"Статья '{article.title}' добавлена в библиотеку")
+                self.statusBar().showMessage(f"Статья '{article.title}' добавлена в библиотеку")
                 
                 # Обновляем отображение библиотеки
                 self.filter_library()
         except Exception as e:
-            self.status_bar.showMessage(f"Ошибка при добавлении в библиотеку: {str(e)}")
-    
-    def filter_library(self):
-        """Фильтрует библиотеку по выбранной категории."""
-        category = self.category_combo.currentText()
-        
-        try:
-            articles = self.storage_service.get_library_articles(category)
-            
-            # Отображение библиотеки
-            self.library_list.clear()
-            for article in articles:
-                self.library_list.addItem(article.display_info)
-            
-            self.status_bar.showMessage(f"Статей в библиотеке: {len(articles)}")
-        except Exception as e:
-            self.status_bar.showMessage(f"Ошибка при загрузке библиотеки: {str(e)}")
+            self.statusBar().showMessage(f"Ошибка при добавлении в библиотеку: {str(e)}")
     
     def export_library(self):
         """Экспортирует выбранные статьи из библиотеки."""
         selected_items = self.library_list.selectedItems()
         if not selected_items:
-            self.status_bar.showMessage("Выберите статьи для экспорта")
+            self.statusBar().showMessage("Выберите статьи для экспорта")
             return
         
-        # Диалог сохранения
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Сохранить библиографию", "", "BibTeX (*.bib);;PDF (*.pdf);;Word (*.docx);;JSON (*.json)"
-        )
-        
-        if file_path:
-            try:
+        try:
+            file_path, _ = QFileDialog.getSaveFileName(
+                    self,
+                    "Сохранить как",
+                    "",
+                    "BibTeX (*.bib);;CSV (*.csv);;Все файлы (*.*)"
+            )
+
+            if file_path:
                 # Получаем индексы выбранных статей
                 selected_indices = [self.library_list.row(item) for item in selected_items]
                 
                 # Экспортируем
                 self.storage_service.export_articles(selected_indices, file_path)
-                self.status_bar.showMessage(f"Экспорт завершен: {file_path}")
-            except Exception as e:
-                self.status_bar.showMessage(f"Ошибка при экспорте: {str(e)}")
-    
-    def delete_from_library(self):
-        """Удаляет выбранные статьи из библиотеки."""
-        selected_items = self.library_list.selectedItems()
-        if not selected_items:
-            self.status_bar.showMessage("Выберите статьи для удаления")
-            return
-        
-        try:
-            # Получаем индексы выбранных статей
-            selected_indices = [self.library_list.row(item) for item in selected_items]
-            
-            # Удаляем
-            self.storage_service.delete_articles(selected_indices)
-            
-            # Обновляем отображение
-            self.filter_library()
-            self.status_bar.showMessage("Выбранные статьи удалены")
+                self.statusBar().showMessage(f"Экспорт завершен: {file_path}")
         except Exception as e:
-            self.status_bar.showMessage(f"Ошибка при удалении: {str(e)}") 
+            self.statusBar().showMessage(f"Ошибка при экспорте: {str(e)}")
+    
+    def show_settings(self):
+        """Показывает диалог настроек."""
+        dialog = SettingsDialog(self)
+        dialog.exec()
+
+    def settings_changed(self):
+        """Обработчик изменения настроек."""
+        self.statusBar().showMessage("Настройки сохранены. Перезапустите приложение для применения изменений.")
+
+    def download_article(self):
+        """Скачивает PDF версию статьи."""
+        item = self.results_list.currentItem()
+        if not item:
+            self.statusBar().showMessage("Выберите статью для скачивания")
+            return
+
+        article = item.data(Qt.ItemDataRole.UserRole)
+        if not article:
+            return
+
+        try:
+            # Открываем диалог выбора места сохранения
+            file_name, _ = QFileDialog.getSaveFileName(
+                self,
+                "Сохранить PDF статьи",
+                f"{article.title}.pdf",
+                "PDF файлы (*.pdf)"
+            )
+
+            if file_name:
+                self.statusBar().showMessage("Скачивание статьи...")
+                # Скачиваем PDF
+                self.arxiv_service.download_pdf(article, file_name)
+                self.statusBar().showMessage(f"Статья сохранена в {file_name}")
+
+                # Спрашиваем пользователя, хочет ли он открыть папку с файлом
+                reply = QMessageBox.question(
+                    self,
+                    "Статья скачана",
+                    "Статья успешно скачана. Открыть папку с файлом?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+
+                if reply == QMessageBox.StandardButton.Yes:
+                    # Открываем папку с файлом
+                    os.system(f'explorer /select,"{file_name}"')
+
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка при скачивании статьи: {str(e)}") 

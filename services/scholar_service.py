@@ -74,8 +74,8 @@ class ScholarService:
             }
         ]
             
-        return sources
-    
+        return sources 
+
     def search_arxiv(self, query, limit=10):
         """
         Поиск статей через ArXiv API.

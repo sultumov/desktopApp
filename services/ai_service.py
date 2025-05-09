@@ -1,21 +1,74 @@
+"""
+Сервис для работы с AI API.
+"""
+
 import os
 import json
 from typing import List, Dict, Any, Optional, Union
 import logging
 import random
 import re
+from dotenv import load_dotenv
 
 from models.article import Article, Author
 
+logger = logging.getLogger(__name__)
+
+# Загрузка переменных окружения
+load_dotenv()
+
 class AIService:
-    """Сервис для работы с ИИ моделями."""
+    """Сервис для работы с AI API."""
     
     def __init__(self):
-        """Инициализирует сервис для работы с ИИ."""
-        # Определяем модель из env или используем OpenAI по умолчанию
-        self.backend = os.getenv("AI_BACKEND", "openai")
-        self.api_key = os.getenv("OPENAI_API_KEY", "")
+        """Инициализирует сервис."""
+        self.service = os.getenv("AI_SERVICE", "OpenAI")
+        self.api_key = os.getenv("API_KEY")
+        self.model = os.getenv("MODEL", "GPT-3.5")
+        self.language = os.getenv("LANGUAGE", "Русский")
         
+    def create_summary(self, article: Article) -> str:
+        """Создает краткое содержание статьи."""
+        try:
+            logger.info(f"Создание краткого содержания для статьи: {article.title}")
+            # TODO: Реализовать создание краткого содержания с помощью AI
+            return f"""Краткое содержание статьи "{article.title}":
+
+1. Основные идеи:
+   - Идея 1
+   - Идея 2
+   - Идея 3
+
+2. Методология:
+   - Метод 1
+   - Метод 2
+
+3. Результаты:
+   - Результат 1
+   - Результат 2
+
+4. Выводы:
+   - Вывод 1
+   - Вывод 2"""
+
+        except Exception as e:
+            logger.error(f"Ошибка при создании краткого содержания: {str(e)}")
+            raise
+
+    def find_references(self, article: Article) -> List[str]:
+        """Ищет источники в статье."""
+        try:
+            logger.info(f"Поиск источников для статьи: {article.title}")
+            # TODO: Реализовать поиск источников с помощью AI
+            return [
+                "Reference 1",
+                "Reference 2",
+                "Reference 3"
+            ]
+        except Exception as e:
+            logger.error(f"Ошибка при поиске источников: {str(e)}")
+            raise
+
     def generate_summary(self, text, max_length=1500):
         """
         Генерирует краткое содержание статьи.
@@ -32,12 +85,12 @@ class AIService:
             if len(text) > 15000:
                 text = text[:15000] + "..."
             
-            if self.backend == "openai" and self.api_key:
+            if self.service == "OpenAI" and self.api_key:
                 return self._generate_summary_openai(text, max_length)
             else:
                 return self._generate_summary_huggingface(text, max_length)
         except Exception as e:
-            logging.error(f"Ошибка при генерации резюме: {str(e)}")
+            logger.error(f"Ошибка при генерации резюме: {str(e)}")
             # В случае ошибки возвращаем заглушку для демонстрации
             return self._generate_mock_summary(text)
     
@@ -148,7 +201,7 @@ class AIService:
             
             return response.choices[0].message.content
         except Exception as e:
-            logging.error(f"Ошибка OpenAI API: {str(e)}")
+            logger.error(f"Ошибка OpenAI API: {str(e)}")
             # Если не удалось получить резюме через OpenAI, используем локальную модель
             return self._generate_summary_huggingface(text, max_length)
     
@@ -185,29 +238,9 @@ class AIService:
             # Добавляем Markdown заголовок
             return "# Краткое содержание статьи\n\n" + combined_summary
         except Exception as e:
-            logging.error(f"Ошибка при использовании Hugging Face: {str(e)}")
+            logger.error(f"Ошибка при использовании Hugging Face: {str(e)}")
             # Если модель не загружена или другая ошибка, возвращаем заглушку
             return self._generate_mock_summary(text)
-    
-    def find_references(self, text):
-        """
-        Находит источники в тексте научной статьи.
-        
-        Args:
-            text (str): Текст статьи
-            
-        Returns:
-            list: Список объектов Article с найденными источниками
-        """
-        try:
-            if self.backend == "openai" and self.api_key:
-                return self._find_references_openai(text)
-            else:
-                return self._find_references_huggingface(text)
-        except Exception as e:
-            logging.error(f"Ошибка при поиске источников: {str(e)}")
-            # В случае ошибки возвращаем заглушку
-            return self._generate_mock_references(text)
     
     def _generate_mock_references(self, text, count=8):
         """
@@ -437,12 +470,12 @@ class AIService:
                     
                     references.append(article)
                 except Exception as e:
-                    logging.error(f"Ошибка при обработке ссылки: {str(e)}")
+                    logger.error(f"Ошибка при обработке ссылки: {str(e)}")
                     continue
             
             return references
         except Exception as e:
-            logging.error(f"Ошибка OpenAI API: {str(e)}")
+            logger.error(f"Ошибка OpenAI API: {str(e)}")
             # Если не удалось извлечь ссылки через OpenAI, используем локальную модель
             return self._find_references_huggingface(text)
     
@@ -558,7 +591,7 @@ class AIService:
             return references
             
         except Exception as e:
-            logging.error(f"Ошибка при использовании Hugging Face: {str(e)}")
+            logger.error(f"Ошибка при использовании Hugging Face: {str(e)}")
             # Если модель не загружена или другая ошибка, возвращаем заглушку
             return self._generate_mock_references(text)
         

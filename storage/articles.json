@@ -1,0 +1,31 @@
+[
+    {
+        "id": "http://arxiv.org/abs/2206.12844v1",
+        "title": "Schroder T-quasigroups",
+        "authors": [
+            "V. Shcherbacov"
+        ],
+        "abstract": "We prolong research of Schroder quasigroups and Schroder T-quasigroups.",
+        "year": 2022,
+        "doi": null,
+        "url": "http://arxiv.org/pdf/2206.12844v1",
+        "journal": null,
+        "volume": null,
+        "issue": null,
+        "pages": null,
+        "keywords": [],
+        "full_text": null,
+        "file_path": null,
+        "categories": [
+            "math.GR",
+            "20N05"
+        ],
+        "added_date": "2025-05-10 02:47:24.705902",
+        "source": "Unknown",
+        "citation_count": 0,
+        "reference_count": 0,
+        "summary": "We prolong research of Schroder quasigroups and Schroder T-quasigroups.",
+        "references": [],
+        "published": "2022-06-26 11:12:12+00:00"
+    }
+]

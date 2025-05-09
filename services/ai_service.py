@@ -43,7 +43,10 @@ class AIService:
         try:
             logger.info(f"Создание краткого содержания для статьи: {article.title}")
             
-            if self.service == "OpenAI" and self.api_key:
+            # Приводим строку к нижнему регистру для сравнения, не зависящего от регистра
+            service_lower = self.service.lower()
+            
+            if service_lower == "openai" and self.api_key:
                 from openai import OpenAI
                 
                 # Подготавливаем данные о статье
@@ -76,8 +79,31 @@ class AIService:
                 logger.info("Ответ от API OpenAI получен")
                 
                 return response.choices[0].message.content
+            elif service_lower == "huggingface":
+                # Используем имеющуюся заглушку, пока библиотека не будет установлена
+                logger.info("Использование заглушки для Hugging Face")
+                return f"""Краткое содержание статьи "{article.title}":
+
+1. Основные идеи:
+   - Статья посвящена исследованию в области {', '.join(article.categories) if article.categories else 'науки'}
+   - Рассматриваются ключевые аспекты и методы анализа данных
+   - Предлагается новый подход к решению проблемы
+
+2. Методология:
+   - Анализ существующих методов
+   - Разработка усовершенствованного алгоритма
+   - Экспериментальная проверка результатов
+
+3. Результаты:
+   - Получены статистически значимые улучшения
+   - Предложены практические рекомендации
+   - Определены направления для дальнейших исследований
+
+4. Выводы:
+   - Разработанный метод демонстрирует высокую эффективность
+   - Предложенный подход может быть применен в смежных областях"""
             else:
-                # Если API ключ не настроен, возвращаем заглушку
+                # Если сервис не распознан, возвращаем заглушку
                 return f"""Краткое содержание статьи "{article.title}":
 
 1. Основные идеи:
@@ -106,7 +132,10 @@ class AIService:
         try:
             logger.info(f"Поиск источников для статьи: {article.title}")
             
-            if self.service == "OpenAI" and self.api_key:
+            # Приводим строку к нижнему регистру для сравнения, не зависящего от регистра
+            service_lower = self.service.lower()
+            
+            if service_lower == "openai" and self.api_key:
                 from openai import OpenAI
                 
                 # Подготавливаем данные о статье
@@ -146,6 +175,16 @@ class AIService:
                     ]
                     
                 return references
+            elif service_lower == "huggingface":
+                # Используем заглушку для Hugging Face
+                logger.info("Использование заглушки для Hugging Face")
+                return [
+                    f"Smith, J. & Jones, M. (2021). Advances in {article.categories[0] if article.categories else 'Science'}.",
+                    f"Johnson, M. & Williams, K. (2020). Theoretical foundations of {article.title.split()[0] if article.title else 'Research'}.",
+                    f"Rodriguez, A. (2019). Empirical evidence in {article.categories[-1] if article.categories else 'related work'}.",
+                    f"Chen, L. et al. (2022). Recent developments in {article.title.split()[-1] if article.title else 'the field'}.",
+                    f"Kumar, R. & Singh, V. (2018). A review of methods for {article.categories[0] if article.categories else 'analysis'}."
+                ]
             else:
                 # Если API ключ не настроен, возвращаем заглушку
                 return [
@@ -173,10 +212,19 @@ class AIService:
             if len(text) > 15000:
                 text = text[:15000] + "..."
             
-            if self.service == "OpenAI" and self.api_key:
+            # Приводим строку к нижнему регистру для сравнения, не зависящего от регистра
+            service_lower = self.service.lower()
+            
+            if service_lower == "openai" and self.api_key:
                 return self._generate_summary_openai(text, max_length)
+            elif service_lower == "huggingface":
+                try:
+                    return self._generate_summary_huggingface(text, max_length)
+                except Exception as e:
+                    logger.error(f"Ошибка при использовании Hugging Face: {str(e)}")
+                    return self._generate_mock_summary(text)
             else:
-                return self._generate_summary_huggingface(text, max_length)
+                return self._generate_mock_summary(text)
         except Exception as e:
             logger.error(f"Ошибка при генерации резюме: {str(e)}")
             # В случае ошибки возвращаем заглушку для демонстрации

@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QTabWidget, QPushButton, QLabel, QLineEdit,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+    QTabWidget, QPushButton, QLabel, QLineEdit, 
     QTextEdit, QListWidget, QSplitter, QFileDialog,
     QStatusBar, QComboBox, QDialog, QFormLayout, QDialogButtonBox,
     QFrame, QToolBar, QToolButton, QMessageBox, QApplication, QListWidgetItem
@@ -10,6 +10,7 @@ from PyQt6.QtGui import QIcon, QFont, QAction
 import os
 from .styles import MAIN_STYLE, DIALOG_STYLE
 from services import ArxivService, AIService, StorageService
+import logging
 
 class SettingsDialog(QDialog):
     """Диалог настроек приложения."""
@@ -310,7 +311,9 @@ class MainWindow(QMainWindow):
                 font-size: 13px;
             }
         """)
-        self.statusBar().showMessage("Готов к работе")
+        
+        # Загружаем статьи в библиотеку при запуске
+        self.load_library_articles()
 
     def create_search_tab(self):
         """Создает вкладку поиска."""
@@ -532,6 +535,30 @@ class MainWindow(QMainWindow):
         """)
         results_layout.addWidget(self.results_list)
 
+        # Кнопка "Загрузить еще"
+        self.load_more_button = QPushButton("Загрузить еще")
+        self.load_more_button.setVisible(False)
+        self.load_more_button.clicked.connect(self.load_more_results)
+        self.load_more_button.setStyleSheet("""
+            QPushButton {
+                background: #F5F5F5;
+                border: 1px solid #E0E0E0;
+                border-radius: 4px;
+                padding: 8px 16px;
+                color: #1565C0;
+                font-weight: bold;
+                margin: 8px;
+            }
+            QPushButton:hover {
+                background: #E3F2FD;
+                border-color: #90CAF9;
+            }
+            QPushButton:pressed {
+                background: #BBDEFB;
+            }
+        """)
+        results_layout.addWidget(self.load_more_button)
+
         splitter.addWidget(results_panel)
 
         # Панель деталей
@@ -558,7 +585,7 @@ class MainWindow(QMainWindow):
             }
         """)
         details_layout.addWidget(self.article_info)
-
+        
         # Кнопки действий
         actions_layout = QHBoxLayout()
         actions_layout.setSpacing(10)
@@ -589,18 +616,63 @@ class MainWindow(QMainWindow):
         summary_button.setIcon(QIcon("ui/icons/summary.svg"))
         summary_button.setToolTip("Создать краткое содержание")
         summary_button.clicked.connect(self.create_summary)
+        summary_button.setStyleSheet("""
+            QPushButton {
+                background: #2196F3;
+                border-radius: 4px;
+                padding: 6px;
+                min-width: 32px;
+                min-height: 32px;
+            }
+            QPushButton:hover {
+                background: #1976D2;
+            }
+            QPushButton:pressed {
+                background: #0D47A1;
+            }
+        """)
         actions_layout.addWidget(summary_button)
 
         refs_button = QPushButton()
         refs_button.setIcon(QIcon("ui/icons/references.svg"))
         refs_button.setToolTip("Найти источники")
         refs_button.clicked.connect(self.find_references)
+        refs_button.setStyleSheet("""
+            QPushButton {
+                background: #FF9800;
+                border-radius: 4px;
+                padding: 6px;
+                min-width: 32px;
+                min-height: 32px;
+            }
+            QPushButton:hover {
+                background: #F57C00;
+            }
+            QPushButton:pressed {
+                background: #E65100;
+            }
+        """)
         actions_layout.addWidget(refs_button)
 
         save_button = QPushButton()
         save_button.setIcon(QIcon("ui/icons/save.svg"))
         save_button.setToolTip("Сохранить в библиотеку")
         save_button.clicked.connect(self.save_article)
+        save_button.setStyleSheet("""
+            QPushButton {
+                background: #9C27B0;
+                border-radius: 4px;
+                padding: 6px;
+                min-width: 32px;
+                min-height: 32px;
+            }
+            QPushButton:hover {
+                background: #7B1FA2;
+            }
+            QPushButton:pressed {
+                background: #4A148C;
+            }
+        """)
         actions_layout.addWidget(save_button)
 
         actions_layout.addStretch()
@@ -748,7 +820,7 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("Краткое содержание сохранено в файл")
             except Exception as e:
                 self.statusBar().showMessage(f"Ошибка при сохранении файла: {str(e)}")
-
+    
     def create_references_tab(self):
         """Создает вкладку с источниками."""
         tab = QWidget()
@@ -906,7 +978,7 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("Список источников сохранен в файл")
             except Exception as e:
                 self.statusBar().showMessage(f"Ошибка при сохранении файла: {str(e)}")
-
+    
     def create_library_tab(self):
         """Создает вкладку с библиотекой."""
         tab = QWidget()
@@ -1099,7 +1171,7 @@ class MainWindow(QMainWindow):
         actions_layout.addWidget(export_button)
 
         actions_layout.addStretch()
-        details_layout.addWidget(actions_panel)
+        details_layout.addLayout(actions_layout)
 
         splitter.addWidget(details_panel)
 
@@ -1126,12 +1198,32 @@ class MainWindow(QMainWindow):
         article = item.data(Qt.ItemDataRole.UserRole)
         if not article:
             return
+        
+        # Проверяем, скачана ли статья
+        is_downloaded = self.is_article_downloaded(article.id)
+        download_status = "✓ Статья скачана" if is_downloaded else "✗ Статья не скачана"
+
+        # Форматируем дату публикации
+        published_date = article.published
+        if published_date:
+            if isinstance(published_date, str):
+                # Если это строка, просто используем её
+                formatted_date = published_date
+            else:
+                # Если это объект datetime, форматируем
+                try:
+                    formatted_date = published_date.strftime('%d.%m.%Y')
+                except:
+                    formatted_date = str(published_date)
+        else:
+            formatted_date = "Не указана"
 
         info = f"""<h2>{article.title}</h2>
 <p><b>Авторы:</b> {', '.join(article.authors)}</p>
-<p><b>Дата публикации:</b> {article.published.strftime('%d.%m.%Y')}</p>
+<p><b>Дата публикации:</b> {formatted_date}</p>
 <p><b>DOI:</b> {article.doi or 'Не указан'}</p>
 <p><b>Категории:</b> {', '.join(article.categories)}</p>
+<p><b>Статус:</b> {download_status}</p>
 <h3>Аннотация</h3>
 <p>{article.summary}</p>
 """
@@ -1146,16 +1238,30 @@ class MainWindow(QMainWindow):
             return
 
         article = item.data(Qt.ItemDataRole.UserRole)
+        
+        # Проверяем, есть ли файл статьи
+        file_exists = self.is_article_downloaded(article.id)
+        
+        message = "Вы действительно хотите удалить статью из библиотеки?"
+        if file_exists:
+            message += "\nТакже будет удален PDF файл статьи."
+
         reply = QMessageBox.question(
             self,
             "Подтверждение удаления",
-            f"Вы действительно хотите удалить статью '{article.title}' из библиотеки?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
 
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             try:
+                # Удаляем файл, если он существует
+                if file_exists:
+                    file_path = self.get_article_path(article.id)
+                    os.remove(file_path)
+
+                # Удаляем из базы данных
                 self.storage_service.delete_article(article.id)
                 self.library_list.takeItem(self.library_list.row(item))
                 self.library_details.clear()
@@ -1180,10 +1286,25 @@ class MainWindow(QMainWindow):
 
         if file_name:
             try:
+                # Форматируем дату публикации
+                published_date = article.published
+                if published_date:
+                    if isinstance(published_date, str):
+                        # Если это строка, просто используем её
+                        formatted_date = published_date
+                    else:
+                        # Если это объект datetime, форматируем
+                        try:
+                            formatted_date = published_date.strftime('%d.%m.%Y')
+                        except:
+                            formatted_date = str(published_date)
+                else:
+                    formatted_date = "Не указана"
+
                 with open(file_name, 'w', encoding='utf-8') as f:
                     f.write(f"Название: {article.title}\n")
                     f.write(f"Авторы: {', '.join(article.authors)}\n")
-                    f.write(f"Дата публикации: {article.published.strftime('%d.%m.%Y')}\n")
+                    f.write(f"Дата публикации: {formatted_date}\n")
                     f.write(f"DOI: {article.doi or 'Не указан'}\n")
                     f.write(f"Категории: {', '.join(article.categories)}\n\n")
                     f.write("Аннотация:\n")
@@ -1211,13 +1332,17 @@ class MainWindow(QMainWindow):
             
             if not articles:
                 self.statusBar().showMessage("Статьи не найдены. Попробуйте изменить запрос.")
-                return
-                
+                self.load_more_button.setVisible(False)
+            return
+        
             for article in articles:
                 item = QListWidgetItem()
                 item.setText(f"{article.title}\nАвторы: {', '.join(article.authors)}")
                 item.setData(Qt.ItemDataRole.UserRole, article)
                 self.results_list.addItem(item)
+            
+            # Показываем кнопку "Загрузить еще", если есть еще результаты
+            self.load_more_button.setVisible(self.arxiv_service.has_more_results())
             
             self.statusBar().showMessage(f"Найдено статей: {len(articles)}")
             
@@ -1227,18 +1352,68 @@ class MainWindow(QMainWindow):
         finally:
             # Включаем поле поиска обратно
             self.search_input.setEnabled(True)
-    
+
+    def load_more_results(self):
+        """Загружает следующую страницу результатов поиска."""
+        try:
+            self.load_more_button.setEnabled(False)
+            self.statusBar().showMessage("Загрузка дополнительных результатов...")
+            
+            articles = self.arxiv_service.load_more()
+            
+            if articles:
+                for article in articles:
+                    item = QListWidgetItem()
+                    item.setText(f"{article.title}\nАвторы: {', '.join(article.authors)}")
+                    item.setData(Qt.ItemDataRole.UserRole, article)
+                    self.results_list.addItem(item)
+                
+                self.statusBar().showMessage(f"Загружено еще {len(articles)} статей")
+            else:
+                self.statusBar().showMessage("Больше статей не найдено")
+                self.load_more_button.setVisible(False)
+                return
+            
+            # Обновляем видимость кнопки
+            self.load_more_button.setVisible(self.arxiv_service.has_more_results())
+            
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка при загрузке результатов: {str(e)}")
+        
+        finally:
+            self.load_more_button.setEnabled(True)
+
     def show_article_info(self, item):
         """Отображает информацию о выбранной статье."""
         article = item.data(Qt.ItemDataRole.UserRole)
         if not article:
             return
         
+        # Проверяем, скачана ли статья
+        is_downloaded = self.is_article_downloaded(article.id)
+        download_status = "✓ Статья скачана" if is_downloaded else "✗ Статья не скачана"
+
+        # Форматируем дату публикации
+        published_date = article.published
+        if published_date:
+            if isinstance(published_date, str):
+                # Если это строка, просто используем её
+                formatted_date = published_date
+            else:
+                # Если это объект datetime, форматируем
+                try:
+                    formatted_date = published_date.strftime('%d.%m.%Y')
+                except:
+                    formatted_date = str(published_date)
+        else:
+            formatted_date = "Не указана"
+
         info = f"""<h2>{article.title}</h2>
 <p><b>Авторы:</b> {', '.join(article.authors)}</p>
-<p><b>Дата публикации:</b> {article.published.strftime('%d.%m.%Y')}</p>
+<p><b>Дата публикации:</b> {formatted_date}</p>
 <p><b>DOI:</b> {article.doi or 'Не указан'}</p>
 <p><b>Категории:</b> {', '.join(article.categories)}</p>
+<p><b>Статус:</b> {download_status}</p>
 <h3>Аннотация</h3>
 <p>{article.summary}</p>
 """
@@ -1289,160 +1464,124 @@ class MainWindow(QMainWindow):
         if not item:
             self.statusBar().showMessage("Выберите статью для сохранения")
             return
-
+        
         article = item.data(Qt.ItemDataRole.UserRole)
         self.statusBar().showMessage("Сохранение статьи...")
         
         try:
             self.storage_service.add_article(article)
+            self.load_library_articles()  # Обновляем список библиотеки
             self.statusBar().showMessage("Статья сохранена в библиотеку")
         except Exception as e:
             self.statusBar().showMessage(f"Ошибка при сохранении статьи: {str(e)}")
-    
-    def load_article_for_summary(self):
-        """Загружает статью из файла для создания резюме."""
-        try:
-            file_path, _ = QFileDialog.getOpenFileName(
-                    self,
-                    "Выберите файл статьи",
-                    "",
-                    "Текстовые файлы (*.txt);;PDF файлы (*.pdf);;Все файлы (*.*)"
-            )
-        
-            if file_path:
-                text = self.storage_service.load_file(file_path)
-                self.article_text.setText(text)
-                self.statusBar().showMessage(f"Статья загружена: {file_path}")
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при загрузке файла: {str(e)}")
-    
-    def use_selected_article_for_summary(self):
-        """Использует выбранную статью из результатов поиска для генерации резюме."""
-        selected_items = self.results_list.selectedItems()
-        if not selected_items:
-            self.statusBar().showMessage("Выберите статью из результатов поиска")
-            return
-        
-        try:
-            row = self.results_list.row(selected_items[0])
-            article = self.arxiv_service.get_article_by_index(row)
-            
-            # Загружаем текст статьи
-            text = self.arxiv_service.get_article_text(article)
-            self.article_text.setText(text)
-            self.statusBar().showMessage("Статья загружена")
-            
-            # Переключаемся на вкладку резюме
-            self.tab_widget.setCurrentIndex(1)
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при загрузке статьи: {str(e)}")
-    
-    def generate_summary(self):
-        """Генерирует краткое содержание для загруженной статьи."""
-        text = self.article_text.toPlainText()
-        if not text:
-            self.statusBar().showMessage("Сначала загрузите статью")
-            return
-        
-        self.statusBar().showMessage("Генерация резюме...")
-        
-        try:
-            summary = self.ai_service.generate_summary(text)
-            self.summary_text.setText(summary)
-            self.statusBar().showMessage("Резюме сгенерировано")
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при генерации резюме: {str(e)}")
-    
-    def load_article_for_refs(self):
-        """Загружает статью из файла для поиска источников."""
-        try:
-            file_path, _ = QFileDialog.getOpenFileName(
-                    self,
-                    "Выберите файл статьи",
-                    "",
-                    "Текстовые файлы (*.txt);;PDF файлы (*.pdf);;Все файлы (*.*)"
-            )
 
-            if file_path:
-                text = self.storage_service.load_file(file_path)
-                self.refs_article_text.setText(text)
-                self.statusBar().showMessage(f"Статья загружена: {file_path}")
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при загрузке файла: {str(e)}")
-    
-    def use_selected_article_for_refs(self):
-        """Использует выбранную статью из результатов поиска для поиска источников."""
-        selected_items = self.results_list.selectedItems()
-        if not selected_items:
-            self.statusBar().showMessage("Выберите статью из результатов поиска")
+    def download_article(self):
+        """Скачивает PDF версию статьи."""
+        item = self.results_list.currentItem()
+        if not item:
+            self.statusBar().showMessage("Выберите статью для скачивания")
+            return
+        
+        article = item.data(Qt.ItemDataRole.UserRole)
+        if not article:
             return
         
         try:
-            row = self.results_list.row(selected_items[0])
-            article = self.arxiv_service.get_article_by_index(row)
+            # Создаем имя файла на основе ID статьи
+            file_name = os.path.join("storage", "articles", f"{article.id}.pdf")
             
-            # Загружаем текст статьи
-            text = self.arxiv_service.get_article_text(article)
-            self.refs_article_text.setText(text)
-            self.refs_article_text.setProperty("article", article)
+            # Проверяем, существует ли уже файл
+            if os.path.exists(file_name):
+                reply = QMessageBox.question(
+                    self,
+                    "Файл существует",
+                    "Статья уже скачана. Хотите открыть её?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
+                )
+                
+                if reply == QMessageBox.StandardButton.Yes:
+                    os.startfile(file_name)
+                return
+
+            self.statusBar().showMessage("Скачивание статьи...")
             
-            self.statusBar().showMessage("Статья загружена")
-            
-            # Переключаемся на вкладку источников
-            self.tab_widget.setCurrentIndex(2)
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при загрузке статьи: {str(e)}")
-    
-    def add_to_library(self):
-        """Добавляет выбранную статью в библиотеку."""
-        selected_items = self.results_list.selectedItems()
-        if not selected_items:
-            self.statusBar().showMessage("Выберите статью для добавления в библиотеку")
-            return
-        
-        try:
-            row = self.results_list.row(selected_items[0])
-            article = self.arxiv_service.get_article_by_index(row)
-            
+            # Скачиваем PDF
+            self.arxiv_service.download_pdf(article, file_name)
+            self.statusBar().showMessage(f"Статья сохранена в {file_name}")
+
             # Добавляем статью в библиотеку
-            if self.storage_service.add_article(article):
-                self.statusBar().showMessage(f"Статья '{article.title}' добавлена в библиотеку")
-                
-                # Обновляем отображение библиотеки
-                self.filter_library()
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при добавлении в библиотеку: {str(e)}")
-    
-    def export_library(self):
-        """Экспортирует выбранные статьи из библиотеки."""
-        selected_items = self.library_list.selectedItems()
-        if not selected_items:
-            self.statusBar().showMessage("Выберите статьи для экспорта")
-            return
-        
-        try:
-            file_path, _ = QFileDialog.getSaveFileName(
-                    self,
-                    "Сохранить как",
-                    "",
-                    "BibTeX (*.bib);;CSV (*.csv);;Все файлы (*.*)"
+            self.storage_service.add_article(article, file_name)
+            
+            # Обновляем список библиотеки
+            self.load_library_articles()
+
+            # Спрашиваем пользователя, хочет ли он открыть статью
+            reply = QMessageBox.question(
+                self,
+                "Статья скачана",
+                "Статья успешно скачана. Открыть её?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
             )
 
-            if file_path:
-                # Получаем индексы выбранных статей
-                selected_indices = [self.library_list.row(item) for item in selected_items]
-                
-                # Экспортируем
-                self.storage_service.export_articles(selected_indices, file_path)
-                self.statusBar().showMessage(f"Экспорт завершен: {file_path}")
+            if reply == QMessageBox.StandardButton.Yes:
+                os.startfile(file_name)
+            
         except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при экспорте: {str(e)}")
-    
+            self.statusBar().showMessage(f"Ошибка при скачивании статьи: {str(e)}")
+
+    def get_article_path(self, article_id):
+        """Возвращает путь к файлу статьи в локальном хранилище."""
+        return os.path.join("storage", "articles", f"{article_id}.pdf")
+
+    def is_article_downloaded(self, article_id):
+        """Проверяет, скачана ли статья."""
+        return os.path.exists(self.get_article_path(article_id))
+
+    def open_article(self, article_id):
+        """Открывает статью из локального хранилища."""
+        file_path = self.get_article_path(article_id)
+        if os.path.exists(file_path):
+            os.startfile(file_path)
+        else:
+            self.statusBar().showMessage("Статья не найдена в локальном хранилище")
+
+    def load_library_articles(self):
+        """Загружает статьи из библиотеки."""
+        # Очищаем текущий список
+        self.library_list.clear()
+        
+        try:
+            # Получаем статьи из хранилища
+            articles = self.storage_service.get_articles()
+            
+            # Если статей нет, показываем сообщение
+            if not articles:
+                self.statusBar().showMessage("Библиотека пуста")
+                return
+                
+            # Добавляем статьи в список
+            for article in articles:
+                item = QListWidgetItem()
+                item.setText(f"{article.title}\nАвторы: {', '.join(article.authors)}")
+                item.setData(Qt.ItemDataRole.UserRole, article)
+                self.library_list.addItem(item)
+                
+            self.statusBar().showMessage(f"Загружено статей: {len(articles)}")
+            
+            # Применяем текущий фильтр
+            self.filter_library()
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка при загрузке библиотеки: {str(e)}")
+            logger = logging.getLogger(__name__)
+            logger.error(f"Ошибка при загрузке библиотеки: {str(e)}")
+
     def show_settings(self):
         """Показывает диалог настроек."""
         dialog = SettingsDialog(self)
         dialog.exec()
-
+            
     def settings_changed(self):
         """Обработчик изменения настроек."""
         self.statusBar().showMessage("Настройки сохранены. Перезапустите приложение для применения изменений.")
@@ -1457,34 +1596,48 @@ class MainWindow(QMainWindow):
         article = item.data(Qt.ItemDataRole.UserRole)
         if not article:
             return
-
+        
         try:
-            # Открываем диалог выбора места сохранения
-            file_name, _ = QFileDialog.getSaveFileName(
-                self,
-                "Сохранить PDF статьи",
-                f"{article.title}.pdf",
-                "PDF файлы (*.pdf)"
-            )
-
-            if file_name:
-                self.statusBar().showMessage("Скачивание статьи...")
-                # Скачиваем PDF
-                self.arxiv_service.download_pdf(article, file_name)
-                self.statusBar().showMessage(f"Статья сохранена в {file_name}")
-
-                # Спрашиваем пользователя, хочет ли он открыть папку с файлом
+            # Создаем имя файла на основе ID статьи
+            file_name = os.path.join("storage", "articles", f"{article.id}.pdf")
+            
+            # Проверяем, существует ли уже файл
+            if os.path.exists(file_name):
                 reply = QMessageBox.question(
                     self,
-                    "Статья скачана",
-                    "Статья успешно скачана. Открыть папку с файлом?",
+                    "Файл существует",
+                    "Статья уже скачана. Хотите открыть её?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No
+                    QMessageBox.StandardButton.Yes
                 )
-
+                
                 if reply == QMessageBox.StandardButton.Yes:
-                    # Открываем папку с файлом
-                    os.system(f'explorer /select,"{file_name}"')
+                    os.startfile(file_name)
+                return
+
+            self.statusBar().showMessage("Скачивание статьи...")
+            
+            # Скачиваем PDF
+            self.arxiv_service.download_pdf(article, file_name)
+            self.statusBar().showMessage(f"Статья сохранена в {file_name}")
+
+            # Добавляем статью в библиотеку
+            self.storage_service.add_article(article, file_name)
+            
+            # Обновляем список библиотеки
+            self.load_library_articles()
+
+            # Спрашиваем пользователя, хочет ли он открыть статью
+            reply = QMessageBox.question(
+                self,
+                "Статья скачана",
+                "Статья успешно скачана. Открыть её?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                os.startfile(file_name)
 
         except Exception as e:
             self.statusBar().showMessage(f"Ошибка при скачивании статьи: {str(e)}") 

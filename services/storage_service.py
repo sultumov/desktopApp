@@ -58,12 +58,24 @@ class StorageService:
             logger.error(f"Ошибка при получении статьи: {str(e)}")
             raise
 
-    def add_article(self, article: Article):
+    def add_article(self, article: Article, file_path: str = None):
         """Добавляет статью в хранилище."""
         try:
+            # Обновляем путь к файлу, если он предоставлен
+            if file_path:
+                article.file_path = file_path
+                
+            # Проверяем, нет ли уже такой статьи
             if not self.get_article(article.id):
                 self.articles.append(article)
                 self._save_articles()
+            else:
+                # Обновляем существующую статью
+                for i, a in enumerate(self.articles):
+                    if a.id == article.id:
+                        self.articles[i] = article
+                        self._save_articles()
+                        break
         except Exception as e:
             logger.error(f"Ошибка при добавлении статьи: {str(e)}")
             raise

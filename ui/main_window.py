@@ -1470,8 +1470,18 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Сохранение статьи...")
         
         try:
+            # Создаем путь к файлу даже если файла еще нет
+            file_path = os.path.join("storage", "articles", f"{article.id}.pdf")
+            
+            # Обновляем путь к файлу в статье
+            article.file_path = file_path
+            
+            # Сохраняем статью в хранилище
             self.storage_service.add_article(article)
-            self.load_library_articles()  # Обновляем список библиотеки
+            
+            # Обновляем список библиотеки
+            self.load_library_articles()
+            
             self.statusBar().showMessage("Статья сохранена в библиотеку")
         except Exception as e:
             self.statusBar().showMessage(f"Ошибка при сохранении статьи: {str(e)}")

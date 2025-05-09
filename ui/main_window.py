@@ -1567,8 +1567,15 @@ class MainWindow(QMainWindow):
             # Получаем статьи из хранилища
             articles = self.storage_service.get_articles()
             
+            # Выводим отладочную информацию
+            logger = logging.getLogger(__name__)
+            logger.info(f"Загружаем статьи из хранилища. Всего статей: {len(articles)}")
+            for i, article in enumerate(articles):
+                logger.info(f"Статья #{i+1}: ID={article.id}, Заголовок={article.title}, Файл={article.file_path}")
+            
             # Если статей нет, показываем сообщение
             if not articles:
+                logger.warning("Библиотека пуста - статьи не найдены")
                 self.statusBar().showMessage("Библиотека пуста")
                 return
                 
@@ -1578,15 +1585,18 @@ class MainWindow(QMainWindow):
                 item.setText(f"{article.title}\nАвторы: {', '.join(article.authors)}")
                 item.setData(Qt.ItemDataRole.UserRole, article)
                 self.library_list.addItem(item)
+                logger.info(f"Добавлена статья в UI список: {article.title}")
                 
             self.statusBar().showMessage(f"Загружено статей: {len(articles)}")
             
             # Применяем текущий фильтр
             self.filter_library()
+            logger.info("Фильтр библиотеки применен")
         except Exception as e:
             self.statusBar().showMessage(f"Ошибка при загрузке библиотеки: {str(e)}")
             logger = logging.getLogger(__name__)
             logger.error(f"Ошибка при загрузке библиотеки: {str(e)}")
+            logger.exception("Подробная информация об ошибке:")
 
     def show_settings(self):
         """Показывает диалог настроек."""

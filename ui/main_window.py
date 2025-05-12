@@ -1,209 +1,58 @@
+"""Главное окно приложения ArXiv Assistant."""
+
+import os
+import logging
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QTabWidget, QPushButton, QLabel, QLineEdit, 
-    QTextEdit, QListWidget, QSplitter, QFileDialog,
-    QStatusBar, QComboBox, QDialog, QFormLayout, QDialogButtonBox,
-    QFrame, QToolBar, QToolButton, QMessageBox, QApplication, QListWidgetItem
+    QMainWindow, QWidget, QVBoxLayout, QToolBar,
+    QToolButton, QTabWidget, QApplication, QDialog, 
+    QMessageBox, QFileDialog
 )
 from PyQt6.QtCore import Qt, QSize, QTimer
-from PyQt6.QtGui import QIcon, QFont, QAction
-import os
-from .styles import MAIN_STYLE, DIALOG_STYLE
-from .custom_widgets import CustomSplitter, CollapsiblePanel
+from PyQt6.QtGui import QIcon
+
 from services import ArxivService, AIService, StorageService, UserSettings
-import logging
+from .dialogs.settings_dialog import SettingsDialog
+from .tabs.search_tab import SearchTab
+from .tabs.summary_tab import SummaryTab
+from .tabs.references_tab import ReferencesTab
+from .tabs.library_tab import LibraryTab
+from .styles import MAIN_STYLE
 
-class SettingsDialog(QDialog):
-    """Диалог настроек приложения."""
-    
-    def __init__(self, parent=None):
-        """Инициализирует диалог настроек."""
-        super().__init__(parent)
-        self.setWindowTitle("Настройки")
-        self.setMinimumWidth(400)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: white;
-            }
-            QLabel {
-                color: #333333;
-            }
-            QLineEdit {
-                padding: 8px;
-                border: 1px solid #BDBDBD;
-                border-radius: 4px;
-                background: white;
-            }
-            QLineEdit:focus {
-                border: 1px solid #2196F3;
-            }
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                min-width: 100px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:pressed {
-                background-color: #0D47A1;
-            }
-            QComboBox {
-                padding: 8px;
-                border: 1px solid #BDBDBD;
-                border-radius: 4px;
-                background: white;
-            }
-            QComboBox:hover {
-                border: 1px solid #2196F3;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 20px;
-            }
-            QComboBox::down-arrow {
-                image: url(ui/icons/down-arrow.svg);
-                width: 12px;
-                height: 12px;
-            }
-            QDialogButtonBox {
-                button-layout: spread;
-            }
-        """)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
-
-        # Заголовок
-        title_label = QLabel("Настройки приложения")
-        title_label.setStyleSheet("""
-            QLabel {
-                font-size: 20px;
-                font-weight: bold;
-                color: #333333;
-            }
-        """)
-        layout.addWidget(title_label)
-
-        # Описание
-        description = QLabel(
-            "Настройте параметры приложения для работы с ArXiv и AI-сервисами. "
-            "Изменения вступят в силу после перезапуска приложения."
-        )
-        description.setWordWrap(True)
-        description.setStyleSheet("""
-            QLabel {
-                color: #666666;
-                font-size: 14px;
-                line-height: 1.5;
-            }
-        """)
-        layout.addWidget(description)
-
-        # Форма настроек
-        form_layout = QFormLayout()
-        form_layout.setSpacing(12)
-        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-
-        # AI-сервис
-        self.ai_service = QComboBox()
-        self.ai_service.addItems(["OpenAI", "Anthropic", "Google"])
-        form_layout.addRow("AI-сервис:", self.ai_service)
-
-        # API ключ
-        self.api_key = QLineEdit()
-        self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        form_layout.addRow("API ключ:", self.api_key)
-
-        # Модель
-        self.model = QComboBox()
-        self.model.addItems(["GPT-4", "GPT-3.5", "Claude-3", "Gemini"])
-        form_layout.addRow("Модель:", self.model)
-
-        # Язык
-        self.language = QComboBox()
-        self.language.addItems(["Русский", "English"])
-        form_layout.addRow("Язык:", self.language)
-
-        # Количество результатов
-        self.results_count = QComboBox()
-        self.results_count.addItems(["10", "20", "30", "50", "100"])
-        form_layout.addRow("Результатов на странице:", self.results_count)
-
-        layout.addLayout(form_layout)
-        
-        # Кнопки
-        button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        button_box.button(QDialogButtonBox.StandardButton.Save).setText("Сохранить")
-        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Отмена")
-        layout.addWidget(button_box)
-
-        # Загрузка текущих настроек
-        self.load_settings()
-    
-    def load_settings(self):
-        """Загружает текущие настройки."""
-        try:
-            with open(".env") as f:
-                for line in f:
-                    if "=" not in line:
-                        continue
-                    key, value = line.strip().split("=", 1)
-                    if key == "AI_SERVICE":
-                        self.ai_service.setCurrentText(value)
-                    elif key == "API_KEY":
-                        self.api_key.setText(value)
-                    elif key == "MODEL":
-                        self.model.setCurrentText(value)
-                    elif key == "LANGUAGE":
-                        self.language.setCurrentText(value)
-                    elif key == "RESULTS_COUNT":
-                        self.results_count.setCurrentText(value)
-        except FileNotFoundError:
-            pass
-
-    def accept(self):
-        """Сохраняет настройки и закрывает диалог."""
-        try:
-            with open(".env", "w") as f:
-                f.write(f"AI_SERVICE={self.ai_service.currentText()}\n")
-                f.write(f"API_KEY={self.api_key.text()}\n")
-                f.write(f"MODEL={self.model.currentText()}\n")
-                f.write(f"LANGUAGE={self.language.currentText()}\n")
-                f.write(f"RESULTS_COUNT={self.results_count.currentText()}\n")
-            super().accept()
-            if self.parent():
-                self.parent().settings_changed()
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Ошибка",
-                f"Не удалось сохранить настройки: {str(e)}"
-            )
+from utils import (
+    save_text_to_file, export_article_to_file, open_file, confirm_file_action,
+    copy_to_clipboard, show_info_message, show_error_message, show_warning_message, 
+    set_status_message, delay_call, confirm_action,
+    log_exception, safe_execute, exception_handler, gui_exception_handler,
+    download_pdf, is_valid_pdf, load_json_settings, save_json_settings, 
+    load_env_settings, save_env_settings, get_config_dir, get_user_data_dir,
+    UserSettingsManager
+)
 
 class MainWindow(QMainWindow):
+    """Главное окно приложения."""
+    
     def __init__(self):
         """Инициализирует главное окно приложения."""
         super().__init__()
-
+        
         # Инициализация сервисов
         self.arxiv_service = ArxivService()
         self.ai_service = AIService()
         self.storage_service = StorageService()
         self.user_settings = UserSettings()
-
+        
+        # Настройка главного окна
+        self.setup_ui()
+        
+        # Загружаем статьи в библиотеку при запуске
+        self.load_library_articles()
+        
+    def setup_ui(self):
+        """Настраивает пользовательский интерфейс."""
         # Настройка главного окна
         self.setWindowTitle("ArXiv Assistant")
         self.setMinimumSize(1200, 800)
-
+        
         # Восстановление размера и позиции окна
         window_size = self.user_settings.get_window_size()
         window_position = self.user_settings.get_window_position()
@@ -212,20 +61,44 @@ class MainWindow(QMainWindow):
             self.resize(window_size[0], window_size[1])
         if window_position:
             self.move(window_position[0], window_position[1])
-
+            
+        # Применяем стили
+        self.setStyleSheet(MAIN_STYLE)
+            
         # Создание центрального виджета
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-
-        # Применяем стили
-        self.setStyleSheet(MAIN_STYLE)
-
+        
         # Создание панели инструментов
+        self.create_toolbar()
+        
+        # Создание вкладок
+        self.create_tabs()
+        layout.addWidget(self.tab_widget)
+        
+        # Создание строки состояния
+        self.statusBar().setStyleSheet("""
+            QStatusBar {
+                background: white;
+                color: #666666;
+                padding: 4px 8px;
+                font-size: 13px;
+            }
+        """)
+        
+        # Таймер для сохранения настроек при изменении размера окна
+        self.resize_timer = QTimer()
+        self.resize_timer.setInterval(500)  # Задержка в 500 мс
+        self.resize_timer.setSingleShot(True)
+        self.resize_timer.timeout.connect(self.save_window_size)
+        
+    def create_toolbar(self):
+        """Создает панель инструментов."""
         toolbar = QToolBar()
-        toolbar.setMovable(True)  # Разрешаем перемещение панели инструментов
+        toolbar.setMovable(True)
         toolbar.setStyleSheet("""
             QToolBar {
                 background: white;
@@ -255,8 +128,9 @@ class MainWindow(QMainWindow):
             }
         """)
         toolbar.addWidget(settings_button)
-
-        # Создание вкладок
+        
+    def create_tabs(self):
+        """Создает и настраивает вкладки приложения."""
         self.tab_widget = QTabWidget()
         self.tab_widget.setStyleSheet("""
             QTabWidget::pane {
@@ -289,29 +163,34 @@ class MainWindow(QMainWindow):
                 color: #1976D2;
             }
         """)
-        layout.addWidget(self.tab_widget)
-
+        
         # Восстановление текущей вкладки
         current_tab = self.user_settings.get_current_tab()
-
+        
+        # Создание вкладок
+        self.search_tab = SearchTab(self)
+        self.summary_tab = SummaryTab(self)
+        self.references_tab = ReferencesTab(self)
+        self.library_tab = LibraryTab(self)
+        
         # Добавление вкладок
         self.tab_widget.addTab(
-            self.create_search_tab(),
+            self.search_tab,
             QIcon("ui/icons/search-tab.svg"),
             "Поиск статей"
         )
         self.tab_widget.addTab(
-            self.create_summary_tab(),
+            self.summary_tab,
             QIcon("ui/icons/summary-tab.svg"),
             "Краткое содержание"
         )
         self.tab_widget.addTab(
-            self.create_references_tab(),
+            self.references_tab,
             QIcon("ui/icons/references-tab.svg"),
             "Поиск источников"
         )
         self.tab_widget.addTab(
-            self.create_library_tab(),
+            self.library_tab,
             QIcon("ui/icons/library-tab.svg"),
             "Моя библиотека"
         )
@@ -319,29 +198,10 @@ class MainWindow(QMainWindow):
         # Установка текущей вкладки
         if current_tab < self.tab_widget.count():
             self.tab_widget.setCurrentIndex(current_tab)
-        
+            
         # Отслеживание изменения вкладки
         self.tab_widget.currentChanged.connect(self.tab_changed)
-
-        # Создание строки состояния
-        self.statusBar().setStyleSheet("""
-            QStatusBar {
-                background: white;
-                color: #666666;
-                padding: 4px 8px;
-                font-size: 13px;
-            }
-        """)
         
-        # Загружаем статьи в библиотеку при запуске
-        self.load_library_articles()
-        
-        # Таймер для сохранения настроек при изменении размера окна
-        self.resize_timer = QTimer()
-        self.resize_timer.setInterval(500)  # Задержка в 500 мс
-        self.resize_timer.setSingleShot(True)
-        self.resize_timer.timeout.connect(self.save_window_size)
-
     def resizeEvent(self, event):
         """Обрабатывает событие изменения размера окна."""
         super().resizeEvent(event)
@@ -367,1458 +227,7 @@ class MainWindow(QMainWindow):
         """Обрабатывает изменение размеров разделителей."""
         self.user_settings.set_splitter_sizes(name, sizes)
         self.user_settings.save_settings()
-
-    def create_search_tab(self):
-        """Создает вкладку поиска."""
-        search_tab = QWidget()
-        layout = QVBoxLayout(search_tab)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # Создаем разделитель для верхней и нижней части
-        self.search_splitter = CustomSplitter(Qt.Orientation.Vertical, "search_splitter")
-        self.search_splitter.splitterMoved.connect(self.splitter_sizes_changed)
         
-        # Восстановление размеров разделителя
-        saved_sizes = self.user_settings.get_splitter_sizes("search_splitter")
-
-        # Создаем панель поиска
-        search_panel = QWidget()
-        search_panel.setObjectName("searchPanel")
-        search_layout = QVBoxLayout(search_panel)
-        search_layout.setContentsMargins(20, 20, 20, 20)
-        search_layout.setSpacing(20)
-
-        # Контейнер для поиска
-        search_container = QWidget()
-        search_container.setObjectName("searchContainer")
-        search_container.setStyleSheet("""
-            QWidget#searchContainer {
-                background: white;
-                border: 2px solid #E0E0E0;
-                border-radius: 8px;
-                padding: 8px;
-            }
-            QWidget#searchContainer:focus-within {
-                border: 2px solid #2196F3;
-                background: white;
-            }
-        """)
-        search_container_layout = QHBoxLayout(search_container)
-        search_container_layout.setContentsMargins(8, 8, 8, 8)
-        search_container_layout.setSpacing(10)
-
-        # Иконка поиска
-        search_icon = QLabel()
-        search_icon.setPixmap(QIcon("ui/icons/search.svg").pixmap(QSize(20, 20)))
-        search_icon.setStyleSheet("QLabel { padding: 0; margin: 0; background: transparent; }")
-        search_container_layout.addWidget(search_icon)
-
-        # Поле поиска
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Поиск...")
-        self.search_input.setFixedWidth(300)
-        self.search_input.returnPressed.connect(self.search_articles)
-        self.search_input.setStyleSheet("""
-            QLineEdit {
-                border: none;
-                background: transparent;
-                font-size: 14px;
-                padding: 6px;
-                color: #333333;
-            }
-            QLineEdit:focus {
-                background: transparent;
-            }
-        """)
-        search_container_layout.addWidget(self.search_input)
-
-        # Фильтры поиска
-        filters_layout = QHBoxLayout()
-        filters_layout.setSpacing(8)
-
-        # Фильтр по типу поиска
-        self.search_type = QComboBox()
-        self.search_type.addItems(["Везде", "Заголовок", "Аннотация", "Автор", "Категория"])
-        self.search_type.setFixedWidth(120)
-        self.search_type.setStyleSheet("""
-            QComboBox {
-                border: 1px solid #E0E0E0;
-                border-radius: 4px;
-                padding: 4px 8px;
-                background: white;
-                color: #333333;
-            }
-            QComboBox:hover {
-                border-color: #2196F3;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 20px;
-            }
-            QComboBox::down-arrow {
-                image: url(ui/icons/down-arrow.svg);
-                width: 12px;
-                height: 12px;
-            }
-        """)
-        filters_layout.addWidget(self.search_type)
-
-        # Фильтр по дате
-        self.date_filter = QComboBox()
-        self.date_filter.addItems(["Любая дата", "За неделю", "За месяц", "За год"])
-        self.date_filter.setFixedWidth(120)
-        self.date_filter.setStyleSheet("""
-            QComboBox {
-                border: 1px solid #E0E0E0;
-                border-radius: 4px;
-                padding: 4px 8px;
-                background: white;
-                color: #333333;
-            }
-            QComboBox:hover {
-                border-color: #2196F3;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 20px;
-            }
-            QComboBox::down-arrow {
-                image: url(ui/icons/down-arrow.svg);
-                width: 12px;
-                height: 12px;
-            }
-        """)
-        filters_layout.addWidget(self.date_filter)
-
-        # Кнопка поиска
-        search_button = QPushButton("Найти")
-        search_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                min-width: 100px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:pressed {
-                background-color: #0D47A1;
-            }
-        """)
-        search_button.clicked.connect(self.search_articles)
-        filters_layout.addWidget(search_button)
-
-        filters_layout.addStretch()
-        search_container_layout.addLayout(filters_layout)
-        search_layout.addWidget(search_container)
-
-        # Создаем сворачиваемую панель для поиска
-        search_collapsible = CollapsiblePanel("Поиск статей")
-        search_collapsible.set_content(search_panel)
-        self.search_splitter.addWidget(search_collapsible)
-
-        # Создаем разделитель для списка и деталей
-        self.search_results_splitter = CustomSplitter(Qt.Orientation.Horizontal, "search_results_splitter")
-        self.search_results_splitter.splitterMoved.connect(self.splitter_sizes_changed)
-        
-        # Восстановление размеров разделителя результатов
-        results_saved_sizes = self.user_settings.get_splitter_sizes("search_results_splitter")
-
-        # Список результатов
-        results_panel = QWidget()
-        results_layout = QVBoxLayout(results_panel)
-        results_layout.setContentsMargins(16, 16, 16, 16)
-        results_layout.setSpacing(16)
-
-        # Заголовок результатов
-        results_title = QLabel("Результаты поиска")
-        results_title.setStyleSheet("""
-            QLabel {
-                font-size: 16px;
-                font-weight: bold;
-                color: #333333;
-            }
-        """)
-        results_layout.addWidget(results_title)
-
-        # Список результатов
-        self.results_list = QListWidget()
-        self.results_list.itemClicked.connect(self.show_article_info)
-        self.results_list.setStyleSheet("""
-            QListWidget {
-                border: 1px solid #E0E0E0;
-                border-radius: 8px;
-                background: white;
-                padding: 8px;
-            }
-            QListWidget::item {
-                border-bottom: 1px solid #EEEEEE;
-                padding: 12px;
-                margin: 2px 4px;
-                border-radius: 4px;
-                background: #F8F9FA;
-                color: #333333;
-            }
-            QListWidget::item:selected {
-                background: #E3F2FD;
-                color: #1565C0;
-                border: 1px solid #90CAF9;
-            }
-            QListWidget::item:hover:!selected {
-                background: #F5F5F5;
-                border: 1px solid #E0E0E0;
-                color: #1565C0;
-            }
-        """)
-        results_layout.addWidget(self.results_list)
-
-        # Кнопка загрузки дополнительных результатов
-        load_more_button = QPushButton("Загрузить еще")
-        load_more_button.setStyleSheet("""
-            QPushButton {
-                background-color: #E0E0E0;
-                color: #333333;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                min-width: 200px;
-            }
-            QPushButton:hover {
-                background-color: #BDBDBD;
-            }
-            QPushButton:pressed {
-                background-color: #9E9E9E;
-            }
-        """)
-        load_more_button.clicked.connect(self.load_more_results)
-        results_layout.addWidget(load_more_button, 0, Qt.AlignmentFlag.AlignCenter)
-
-        # Создаем сворачиваемую панель для результатов
-        results_collapsible = CollapsiblePanel("Результаты поиска")
-        results_collapsible.set_content(results_panel)
-        self.search_results_splitter.addWidget(results_collapsible)
-
-        # Панель с деталями статьи
-        details_panel = QWidget()
-        details_layout = QVBoxLayout(details_panel)
-        details_layout.setContentsMargins(16, 16, 16, 16)
-        details_layout.setSpacing(16)
-
-        # Заголовок деталей
-        details_title = QLabel("Информация о статье")
-        details_title.setStyleSheet("""
-            QLabel {
-                font-size: 16px;
-                font-weight: bold;
-                color: #333333;
-            }
-        """)
-        details_layout.addWidget(details_title)
-
-        # Текстовое поле для деталей
-        self.article_details = QTextEdit()
-        self.article_details.setReadOnly(True)
-        self.article_details.setStyleSheet("""
-            QTextEdit {
-                border: 1px solid #BDBDBD;
-                border-radius: 4px;
-                background: white;
-                padding: 16px;
-                font-size: 14px;
-                line-height: 1.6;
-                color: #333333;
-            }
-        """)
-        details_layout.addWidget(self.article_details)
-
-        # Панель действий
-        actions_panel = QWidget()
-        actions_layout = QHBoxLayout(actions_panel)
-        actions_layout.setContentsMargins(0, 0, 0, 0)
-        actions_layout.setSpacing(8)
-
-        # Кнопка создания краткого содержания
-        summary_button = QPushButton("Создать краткое содержание")
-        summary_button.setIcon(QIcon("ui/icons/summary.svg"))
-        summary_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                min-width: 200px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:pressed {
-                background-color: #0D47A1;
-            }
-        """)
-        summary_button.clicked.connect(self.create_summary)
-        actions_layout.addWidget(summary_button)
-
-        # Кнопка поиска источников
-        references_button = QPushButton("Найти источники")
-        references_button.setIcon(QIcon("ui/icons/references.svg"))
-        references_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                min-width: 200px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:pressed {
-                background-color: #0D47A1;
-            }
-        """)
-        references_button.clicked.connect(self.find_references)
-        actions_layout.addWidget(references_button)
-
-        # Кнопка сохранения
-        save_button = QPushButton("Сохранить в библиотеку")
-        save_button.setIcon(QIcon("ui/icons/save.svg"))
-        save_button.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                min-width: 200px;
-            }
-            QPushButton:hover {
-                background-color: #388E3C;
-            }
-            QPushButton:pressed {
-                background-color: #1B5E20;
-            }
-        """)
-        save_button.clicked.connect(self.save_article)
-        actions_layout.addWidget(save_button)
-
-        # Кнопка загрузки
-        download_button = QPushButton("Скачать PDF")
-        download_button.setIcon(QIcon("ui/icons/download.svg"))
-        download_button.setStyleSheet("""
-            QPushButton {
-                background-color: #FF9800;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                min-width: 200px;
-            }
-            QPushButton:hover {
-                background-color: #F57C00;
-            }
-            QPushButton:pressed {
-                background-color: #E65100;
-            }
-        """)
-        download_button.clicked.connect(self.download_article)
-        actions_layout.addWidget(download_button)
-
-        details_layout.addLayout(actions_layout)
-
-        # Создаем сворачиваемую панель для деталей
-        details_collapsible = CollapsiblePanel("Детали статьи")
-        details_collapsible.set_content(details_panel)
-        self.search_results_splitter.addWidget(details_collapsible)
-
-        # Установка пропорций разделителя результатов
-        if results_saved_sizes:
-            self.search_results_splitter.setSizes(results_saved_sizes)
-        else:
-            self.search_results_splitter.setStretchFactor(0, 1)  # Результаты
-            self.search_results_splitter.setStretchFactor(1, 2)  # Детали
-
-        self.search_splitter.addWidget(self.search_results_splitter)
-
-        # Установка пропорций основного разделителя
-        if saved_sizes:
-            self.search_splitter.setSizes(saved_sizes)
-        else:
-            self.search_splitter.setStretchFactor(0, 1)  # Поиск
-            self.search_splitter.setStretchFactor(1, 4)  # Результаты и детали
-
-        layout.addWidget(self.search_splitter)
-
-        return search_tab
-    
-    def create_summary_tab(self):
-        """Создает вкладку с кратким содержанием."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(16)
-
-        # Создаем разделитель для верхней и нижней части
-        self.summary_splitter = CustomSplitter(Qt.Orientation.Vertical, "summary_splitter")
-        self.summary_splitter.splitterMoved.connect(self.splitter_sizes_changed)
-        
-        # Восстановление размеров разделителя
-        saved_sizes = self.user_settings.get_splitter_sizes("summary_splitter")
-
-        # Верхняя панель (заголовок и описание)
-        top_panel = QWidget()
-        top_layout = QVBoxLayout(top_panel)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(16)
-
-        # Заголовок
-        title_label = QLabel("Краткое содержание")
-        title_label.setStyleSheet("""
-            QLabel {
-                font-size: 20px;
-                font-weight: bold;
-                color: #333333;
-            }
-        """)
-        top_layout.addWidget(title_label)
-
-        # Описание
-        description = QLabel(
-            "Здесь вы можете создать краткое содержание статьи с помощью искусственного интеллекта. "
-            "Выберите статью на вкладке поиска и нажмите кнопку 'Создать краткое содержание'."
-        )
-        description.setWordWrap(True)
-        description.setStyleSheet("""
-            QLabel {
-                color: #666666;
-                font-size: 14px;
-                line-height: 1.5;
-            }
-        """)
-        top_layout.addWidget(description)
-        
-        # Создаем сворачиваемую панель для заголовка
-        header_collapsible = CollapsiblePanel("Информация")
-        header_collapsible.set_content(top_panel)
-        self.summary_splitter.addWidget(header_collapsible)
-        
-        # Нижняя панель (текст и кнопки)
-        bottom_panel = QWidget()
-        bottom_layout = QVBoxLayout(bottom_panel)
-        bottom_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_layout.setSpacing(8)
-
-        # Текстовое поле для краткого содержания
-        self.summary_text = QTextEdit()
-        self.summary_text.setReadOnly(True)
-        self.summary_text.setStyleSheet("""
-            QTextEdit {
-                border: 1px solid #BDBDBD;
-                border-radius: 4px;
-                background: white;
-                padding: 16px;
-                font-size: 14px;
-                line-height: 1.6;
-                color: #333333;
-            }
-        """)
-        bottom_layout.addWidget(self.summary_text)
-
-        # Панель действий
-        actions_panel = QWidget()
-        actions_layout = QHBoxLayout(actions_panel)
-        actions_layout.setContentsMargins(0, 0, 0, 0)
-        actions_layout.setSpacing(8)
-
-        # Кнопка копирования
-        copy_button = QPushButton()
-        copy_button.setIcon(QIcon("ui/icons/copy.svg"))
-        copy_button.setToolTip("Копировать в буфер обмена")
-        copy_button.clicked.connect(self.copy_summary)
-        copy_button.setFixedSize(40, 40)
-        copy_button.setStyleSheet("""
-            QPushButton {
-                background: #2196F3;
-                border-radius: 20px;
-                padding: 8px;
-            }
-            QPushButton:hover {
-                background: #1976D2;
-            }
-            QPushButton:pressed {
-                background: #0D47A1;
-            }
-        """)
-        actions_layout.addWidget(copy_button)
-
-        # Кнопка сохранения
-        save_button = QPushButton()
-        save_button.setIcon(QIcon("ui/icons/save.svg"))
-        save_button.setToolTip("Сохранить в файл")
-        save_button.clicked.connect(self.save_summary)
-        save_button.setFixedSize(40, 40)
-        save_button.setStyleSheet("""
-            QPushButton {
-                background: #2196F3;
-                border-radius: 20px;
-                padding: 8px;
-            }
-            QPushButton:hover {
-                background: #1976D2;
-            }
-            QPushButton:pressed {
-                background: #0D47A1;
-            }
-        """)
-        actions_layout.addWidget(save_button)
-
-        actions_layout.addStretch()
-        bottom_layout.addWidget(actions_panel)
-        
-        # Создаем сворачиваемую панель для содержимого
-        content_collapsible = CollapsiblePanel("Содержание")
-        content_collapsible.set_content(bottom_panel)
-        self.summary_splitter.addWidget(content_collapsible)
-        
-        # Установка пропорций разделителя
-        if saved_sizes:
-            self.summary_splitter.setSizes(saved_sizes)
-        else:
-            self.summary_splitter.setStretchFactor(0, 1)  # Заголовок
-            self.summary_splitter.setStretchFactor(1, 3)  # Содержание
-
-        layout.addWidget(self.summary_splitter)
-
-        return tab
-
-    def copy_summary(self):
-        """Копирует краткое содержание в буфер обмена."""
-        text = self.summary_text.toPlainText()
-        if text:
-            clipboard = QApplication.clipboard()
-            clipboard.setText(text)
-            self.statusBar().showMessage("Краткое содержание скопировано в буфер обмена")
-        else:
-            self.statusBar().showMessage("Нет краткого содержания для копирования")
-
-    def save_summary(self):
-        """Сохраняет краткое содержание в файл."""
-        text = self.summary_text.toPlainText()
-        if not text:
-            self.statusBar().showMessage("Нет краткого содержания для сохранения")
-            return
-
-        file_name, _ = QFileDialog.getSaveFileName(
-            self,
-            "Сохранить краткое содержание",
-            "",
-            "Текстовые файлы (*.txt);;Все файлы (*.*)"
-        )
-
-        if file_name:
-            try:
-                with open(file_name, 'w', encoding='utf-8') as f:
-                    f.write(text)
-                self.statusBar().showMessage("Краткое содержание сохранено в файл")
-            except Exception as e:
-                self.statusBar().showMessage(f"Ошибка при сохранении файла: {str(e)}")
-    
-    def create_references_tab(self):
-        """Создает вкладку с источниками."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(16)
-
-        # Создаем разделитель для верхней и нижней части
-        self.references_splitter = CustomSplitter(Qt.Orientation.Vertical, "references_splitter")
-        self.references_splitter.splitterMoved.connect(self.splitter_sizes_changed)
-        
-        # Восстановление размеров разделителя
-        saved_sizes = self.user_settings.get_splitter_sizes("references_splitter")
-
-        # Верхняя панель с заголовком и описанием
-        top_panel = QWidget()
-        top_layout = QVBoxLayout(top_panel)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(16)
-
-        # Заголовок
-        title_label = QLabel("Поиск источников")
-        title_label.setStyleSheet("""
-            QLabel {
-                font-size: 20px;
-                font-weight: bold;
-                color: #333333;
-            }
-        """)
-        top_layout.addWidget(title_label)
-
-        # Описание
-        description = QLabel(
-            "Здесь вы можете найти источники, цитируемые в статье. "
-            "Выберите статью на вкладке поиска и нажмите кнопку 'Найти источники'."
-        )
-        description.setWordWrap(True)
-        description.setStyleSheet("""
-            QLabel {
-                color: #666666;
-                font-size: 14px;
-                line-height: 1.5;
-            }
-        """)
-        top_layout.addWidget(description)
-        
-        # Создаем сворачиваемую панель для заголовка
-        header_collapsible = CollapsiblePanel("Информация")
-        header_collapsible.set_content(top_panel)
-        self.references_splitter.addWidget(header_collapsible)
-
-        # Создаем разделитель для списка и деталей
-        self.references_list_splitter = CustomSplitter(Qt.Orientation.Horizontal, "references_list_splitter")
-        self.references_list_splitter.splitterMoved.connect(self.splitter_sizes_changed)
-        
-        # Восстановление размеров разделителя списка
-        list_saved_sizes = self.user_settings.get_splitter_sizes("references_list_splitter")
-
-        # Список источников
-        list_panel = QWidget()
-        list_layout = QVBoxLayout(list_panel)
-        list_layout.setContentsMargins(0, 0, 0, 0)
-        list_layout.setSpacing(8)
-
-        # Заголовок списка
-        list_title = QLabel("Список источников")
-        list_title.setStyleSheet("""
-            QLabel {
-                font-size: 16px;
-                font-weight: bold;
-                color: #333333;
-            }
-        """)
-        list_layout.addWidget(list_title)
-
-        self.references_list = QListWidget()
-        self.references_list.setStyleSheet("""
-            QListWidget {
-                border: 1px solid #E0E0E0;
-                border-radius: 8px;
-                background: white;
-                padding: 8px;
-            }
-            QListWidget::item {
-                border-bottom: 1px solid #EEEEEE;
-                padding: 12px;
-                margin: 2px 4px;
-                border-radius: 4px;
-                background: #F8F9FA;
-                color: #333333;
-            }
-            QListWidget::item:last {
-                border-bottom: none;
-            }
-            QListWidget::item:selected {
-                background: #E3F2FD;
-                color: #1565C0;
-                border: 1px solid #90CAF9;
-            }
-            QListWidget::item:hover:!selected {
-                background: #F5F5F5;
-                border: 1px solid #E0E0E0;
-                color: #1565C0;
-            }
-        """)
-        list_layout.addWidget(self.references_list)
-        
-        # Создаем сворачиваемую панель для списка
-        list_collapsible = CollapsiblePanel("Список источников")
-        list_collapsible.set_content(list_panel)
-        self.references_list_splitter.addWidget(list_collapsible)
-
-        # Детали источников
-        details_panel = QWidget()
-        details_layout = QVBoxLayout(details_panel)
-        details_layout.setContentsMargins(0, 0, 0, 0)
-        details_layout.setSpacing(8)
-        
-        # Заголовок деталей
-        details_title = QLabel("Детали источника")
-        details_title.setStyleSheet("""
-            QLabel {
-                font-size: 16px;
-                font-weight: bold;
-                color: #333333;
-            }
-        """)
-        details_layout.addWidget(details_title)
-
-        # Текстовое поле для деталей
-        self.reference_details = QTextEdit()
-        self.reference_details.setReadOnly(True)
-        self.reference_details.setStyleSheet("""
-            QTextEdit {
-                border: 1px solid #BDBDBD;
-                border-radius: 4px;
-                background: white;
-                padding: 16px;
-                font-size: 14px;
-                line-height: 1.6;
-                color: #333333;
-            }
-        """)
-        details_layout.addWidget(self.reference_details)
-
-        # Панель действий
-        actions_panel = QWidget()
-        actions_layout = QHBoxLayout(actions_panel)
-        actions_layout.setContentsMargins(0, 0, 0, 0)
-        actions_layout.setSpacing(8)
-
-        # Кнопка копирования
-        copy_button = QPushButton("Копировать")
-        copy_button.setIcon(QIcon("ui/icons/copy.svg"))
-        copy_button.clicked.connect(self.copy_references)
-        copy_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                min-width: 120px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:pressed {
-                background-color: #0D47A1;
-            }
-        """)
-        actions_layout.addWidget(copy_button)
-
-        # Кнопка сохранения
-        save_button = QPushButton("Сохранить")
-        save_button.setIcon(QIcon("ui/icons/save.svg"))
-        save_button.clicked.connect(self.save_references)
-        save_button.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                min-width: 120px;
-            }
-            QPushButton:hover {
-                background-color: #388E3C;
-            }
-            QPushButton:pressed {
-                background-color: #1B5E20;
-            }
-        """)
-        actions_layout.addWidget(save_button)
-
-        actions_layout.addStretch()
-        details_layout.addLayout(actions_panel)
-        
-        # Создаем сворачиваемую панель для деталей
-        details_collapsible = CollapsiblePanel("Детали источника")
-        details_collapsible.set_content(details_panel)
-        self.references_list_splitter.addWidget(details_collapsible)
-
-        # Установка пропорций разделителя списка
-        if list_saved_sizes:
-            self.references_list_splitter.setSizes(list_saved_sizes)
-        else:
-            self.references_list_splitter.setStretchFactor(0, 1)  # Список
-            self.references_list_splitter.setStretchFactor(1, 2)  # Детали
-
-        self.references_splitter.addWidget(self.references_list_splitter)
-
-        # Установка пропорций основного разделителя
-        if saved_sizes:
-            self.references_splitter.setSizes(saved_sizes)
-        else:
-            self.references_splitter.setStretchFactor(0, 1)  # Заголовок
-            self.references_splitter.setStretchFactor(1, 4)  # Список и детали
-
-        layout.addWidget(self.references_splitter)
-
-        return tab
-
-    def copy_references(self):
-        """Копирует список источников в буфер обмена."""
-        items = []
-        for i in range(self.references_list.count()):
-            items.append(self.references_list.item(i).text())
-        
-        if items:
-            text = "\n".join(items)
-            clipboard = QApplication.clipboard()
-            clipboard.setText(text)
-            self.statusBar().showMessage("Список источников скопирован в буфер обмена")
-        else:
-            self.statusBar().showMessage("Нет источников для копирования")
-
-    def save_references(self):
-        """Сохраняет список источников в файл."""
-        items = []
-        for i in range(self.references_list.count()):
-            items.append(self.references_list.item(i).text())
-        
-        if not items:
-            self.statusBar().showMessage("Нет источников для сохранения")
-            return
-
-        file_name, _ = QFileDialog.getSaveFileName(
-            self,
-            "Сохранить список источников",
-            "",
-            "Текстовые файлы (*.txt);;Все файлы (*.*)"
-        )
-
-        if file_name:
-            try:
-                with open(file_name, 'w', encoding='utf-8') as f:
-                    f.write("\n".join(items))
-                self.statusBar().showMessage("Список источников сохранен в файл")
-            except Exception as e:
-                self.statusBar().showMessage(f"Ошибка при сохранении файла: {str(e)}")
-    
-    def create_library_tab(self):
-        """Создает вкладку с библиотекой."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(16)
-
-        # Заголовок
-        title_label = QLabel("Моя библиотека")
-        title_label.setStyleSheet("""
-            QLabel {
-                font-size: 20px;
-                font-weight: bold;
-                color: #333333;
-            }
-        """)
-        layout.addWidget(title_label)
-
-        # Описание
-        description = QLabel(
-            "Здесь хранятся сохраненные вами статьи. "
-            "Вы можете просматривать, редактировать и удалять статьи из библиотеки."
-        )
-        description.setWordWrap(True)
-        description.setStyleSheet("""
-            QLabel {
-                color: #666666;
-                font-size: 14px;
-                line-height: 1.5;
-            }
-        """)
-        layout.addWidget(description)
-
-        # Настраиваемый разделитель для списка и деталей
-        self.library_splitter = CustomSplitter(Qt.Orientation.Horizontal, "library_splitter")
-        self.library_splitter.splitterMoved.connect(self.splitter_sizes_changed)
-
-        # Восстановление размеров разделителя
-        saved_sizes = self.user_settings.get_splitter_sizes("library_splitter")
-
-        # Панель со списком статей
-        list_panel = QWidget()
-        list_layout = QVBoxLayout(list_panel)
-        list_layout.setContentsMargins(0, 0, 0, 0)
-        list_layout.setSpacing(8)
-
-        # Поле поиска
-        search_container = QWidget()
-        search_container.setFixedHeight(40)
-        search_container.setStyleSheet("""
-            QWidget {
-                background: #F5F5F5;
-                border: 1px solid #E0E0E0;
-                border-radius: 8px;
-            }
-            QWidget:focus-within {
-                border: 1px solid #2196F3;
-                background: white;
-            }
-        """)
-        container_layout = QHBoxLayout(search_container)
-        container_layout.setContentsMargins(12, 0, 12, 0)
-        container_layout.setSpacing(8)
-
-        # Иконка поиска
-        search_icon = QLabel()
-        search_icon.setPixmap(QIcon("ui/icons/search-tab.svg").pixmap(16, 16))
-        search_icon.setStyleSheet("border: none; background: transparent; padding: 0; margin: 0;")
-        container_layout.addWidget(search_icon)
-
-        # Поле поиска
-        self.library_search = QLineEdit()
-        self.library_search.setPlaceholderText("Поиск в библиотеке...")
-        self.library_search.textChanged.connect(self.filter_library)
-        self.library_search.setStyleSheet("""
-            QLineEdit {
-                border: none;
-                background: #F5F5F5;
-                font-size: 14px;
-                padding: 8px;
-                color: #333333;
-            }
-            QLineEdit:focus {
-                background: white;
-            }
-        """)
-        container_layout.addWidget(self.library_search)
-
-        list_layout.addWidget(search_container)
-
-        # Список статей
-        self.library_list = QListWidget()
-        self.library_list.itemClicked.connect(self.show_library_article)
-        self.library_list.setStyleSheet("""
-            QListWidget {
-                border: 1px solid #E0E0E0;
-                border-radius: 8px;
-                background: white;
-                padding: 8px;
-            }
-            QListWidget::item {
-                border-bottom: 1px solid #EEEEEE;
-                padding: 12px;
-                margin: 2px 4px;
-                border-radius: 4px;
-                background: #F8F9FA;
-                color: #333333;
-            }
-            QListWidget::item:last {
-                border-bottom: none;
-            }
-            QListWidget::item:selected {
-                background: #E3F2FD;
-                color: #1565C0;
-                border: 1px solid #90CAF9;
-            }
-            QListWidget::item:hover:!selected {
-                background: #F5F5F5;
-                border: 1px solid #E0E0E0;
-                color: #1565C0;
-            }
-        """)
-        list_layout.addWidget(self.library_list)
-
-        # Создаем сворачиваемую панель для списка
-        list_collapsible = CollapsiblePanel("Список статей")
-        list_collapsible.set_content(list_panel)
-        
-        self.library_splitter.addWidget(list_collapsible)
-
-        # Панель с деталями статьи
-        details_panel = QWidget()
-        details_layout = QVBoxLayout(details_panel)
-        details_layout.setContentsMargins(0, 0, 0, 0)
-        details_layout.setSpacing(8)
-
-        self.library_details = QTextEdit()
-        self.library_details.setReadOnly(True)
-        self.library_details.setStyleSheet("""
-            QTextEdit {
-                border: 1px solid #BDBDBD;
-                border-radius: 4px;
-                background: white;
-                padding: 16px;
-                font-size: 14px;
-                line-height: 1.6;
-                color: #333333;
-            }
-        """)
-        details_layout.addWidget(self.library_details)
-
-        # Панель действий
-        actions_panel = QWidget()
-        actions_layout = QHBoxLayout(actions_panel)
-        actions_layout.setContentsMargins(0, 0, 0, 0)
-        actions_layout.setSpacing(8)
-
-        # Кнопка удаления
-        delete_button = QPushButton()
-        delete_button.setIcon(QIcon("ui/icons/delete.svg"))
-        delete_button.setToolTip("Удалить из библиотеки")
-        delete_button.clicked.connect(self.delete_from_library)
-        delete_button.setFixedSize(40, 40)
-        delete_button.setStyleSheet("""
-            QPushButton {
-                background: #F44336;
-                border-radius: 20px;
-                padding: 8px;
-            }
-            QPushButton:hover {
-                background: #D32F2F;
-            }
-            QPushButton:pressed {
-                background: #B71C1C;
-            }
-        """)
-        actions_layout.addWidget(delete_button)
-
-        # Кнопка экспорта
-        export_button = QPushButton()
-        export_button.setIcon(QIcon("ui/icons/export.svg"))
-        export_button.setToolTip("Экспортировать")
-        export_button.clicked.connect(self.export_article)
-        export_button.setFixedSize(40, 40)
-        export_button.setStyleSheet("""
-            QPushButton {
-                background: #2196F3;
-                border-radius: 20px;
-                padding: 8px;
-            }
-            QPushButton:hover {
-                background: #1976D2;
-            }
-            QPushButton:pressed {
-                background: #0D47A1;
-            }
-        """)
-        actions_layout.addWidget(export_button)
-
-        actions_layout.addStretch()
-        details_layout.addLayout(actions_panel)
-
-        # Создаем сворачиваемую панель для деталей
-        details_collapsible = CollapsiblePanel("Детали статьи")
-        details_collapsible.set_content(details_panel)
-        
-        self.library_splitter.addWidget(details_collapsible)
-
-        # Установка пропорций разделителя
-        if saved_sizes:
-            self.library_splitter.setSizes(saved_sizes)
-        else:
-            self.library_splitter.setStretchFactor(0, 1)  # Список
-            self.library_splitter.setStretchFactor(1, 2)  # Детали
-
-        layout.addWidget(self.library_splitter)
-
-        return tab
-    
-    def filter_library(self):
-        """Фильтрует список статей в библиотеке."""
-        query = self.library_search.text().lower()
-        for i in range(self.library_list.count()):
-            item = self.library_list.item(i)
-            article = item.data(Qt.ItemDataRole.UserRole)
-            item.setHidden(
-                query not in article.title.lower() and
-                not any(query in author.lower() for author in article.authors)
-            )
-
-    def show_library_article(self, item):
-        """Отображает информацию о выбранной статье из библиотеки."""
-        article = item.data(Qt.ItemDataRole.UserRole)
-        if not article:
-            return
-        
-        # Проверяем, скачана ли статья
-        is_downloaded = self.is_article_downloaded(article.id)
-        download_status = "✓ Статья скачана" if is_downloaded else "✗ Статья не скачана"
-
-        # Форматируем дату публикации
-        published_date = article.published
-        if published_date:
-            if isinstance(published_date, str):
-                # Если это строка, просто используем её
-                formatted_date = published_date
-            else:
-                # Если это объект datetime, форматируем
-                try:
-                    formatted_date = published_date.strftime('%d.%m.%Y')
-                except:
-                    formatted_date = str(published_date)
-        else:
-            formatted_date = "Не указана"
-
-        info = f"""<h2>{article.title}</h2>
-<p><b>Авторы:</b> {', '.join(article.authors)}</p>
-<p><b>Дата публикации:</b> {formatted_date}</p>
-<p><b>DOI:</b> {article.doi or 'Не указан'}</p>
-<p><b>Категории:</b> {', '.join(article.categories)}</p>
-<p><b>Статус:</b> {download_status}</p>
-<h3>Аннотация</h3>
-<p>{article.summary}</p>
-"""
-        self.library_details.setHtml(info)
-        self.statusBar().showMessage(f"Выбрана статья: {article.title}")
-
-    def delete_from_library(self):
-        """Удаляет выбранную статью из библиотеки."""
-        item = self.library_list.currentItem()
-        if not item:
-            self.statusBar().showMessage("Выберите статью для удаления")
-            return
-
-        article = item.data(Qt.ItemDataRole.UserRole)
-        
-        # Проверяем, есть ли файл статьи
-        file_exists = self.is_article_downloaded(article.id)
-        
-        message = "Вы действительно хотите удалить статью из библиотеки?"
-        if file_exists:
-            message += "\nТакже будет удален PDF файл статьи."
-
-        reply = QMessageBox.question(
-            self,
-            "Подтверждение удаления",
-            message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
-            try:
-                # Удаляем файл, если он существует
-                if file_exists:
-                    file_path = self.get_article_path(article.id)
-                    os.remove(file_path)
-
-                # Удаляем из базы данных
-                self.storage_service.delete_article(article.id)
-                self.library_list.takeItem(self.library_list.row(item))
-                self.library_details.clear()
-                self.statusBar().showMessage("Статья удалена из библиотеки")
-            except Exception as e:
-                self.statusBar().showMessage(f"Ошибка при удалении статьи: {str(e)}")
-
-    def export_article(self):
-        """Экспортирует выбранную статью."""
-        item = self.library_list.currentItem()
-        if not item:
-            self.statusBar().showMessage("Выберите статью для экспорта")
-            return
-
-        article = item.data(Qt.ItemDataRole.UserRole)
-        file_name, _ = QFileDialog.getSaveFileName(
-            self,
-            "Экспорт статьи",
-            f"{article.title}.txt",
-            "Текстовые файлы (*.txt);;Все файлы (*.*)"
-        )
-
-        if file_name:
-            try:
-                # Форматируем дату публикации
-                published_date = article.published
-                if published_date:
-                    if isinstance(published_date, str):
-                        # Если это строка, просто используем её
-                        formatted_date = published_date
-                    else:
-                        # Если это объект datetime, форматируем
-                        try:
-                            formatted_date = published_date.strftime('%d.%m.%Y')
-                        except:
-                            formatted_date = str(published_date)
-                else:
-                    formatted_date = "Не указана"
-
-                with open(file_name, 'w', encoding='utf-8') as f:
-                    f.write(f"Название: {article.title}\n")
-                    f.write(f"Авторы: {', '.join(article.authors)}\n")
-                    f.write(f"Дата публикации: {formatted_date}\n")
-                    f.write(f"DOI: {article.doi or 'Не указан'}\n")
-                    f.write(f"Категории: {', '.join(article.categories)}\n\n")
-                    f.write("Аннотация:\n")
-                    f.write(article.summary)
-                self.statusBar().showMessage("Статья экспортирована")
-            except Exception as e:
-                self.statusBar().showMessage(f"Ошибка при экспорте статьи: {str(e)}")
-    
-    # Слоты (методы обработки событий)
-    def search_articles(self):
-        """Выполняет поиск статей по запросу."""
-        query = self.search_input.text().strip()
-        if not query:
-            self.statusBar().showMessage("Введите поисковый запрос")
-            return
-        
-        # Отключаем кнопку поиска и показываем статус
-        self.search_input.setEnabled(False)
-        self.results_list.clear()
-        self.article_details.clear()
-        self.statusBar().showMessage("Выполняется поиск...")
-        
-        try:
-            articles = self.arxiv_service.search_articles(query)
-            
-            if not articles:
-                self.statusBar().showMessage("Статьи не найдены. Попробуйте изменить запрос.")
-                self.load_more_button.setVisible(False)
-                return
-            
-            # Добавляем статьи в список
-            for article in articles:
-                item = QListWidgetItem()
-                item.setText(f"{article.title}\nАвторы: {', '.join(article.authors)}")
-                item.setData(Qt.ItemDataRole.UserRole, article)
-                self.results_list.addItem(item)
-            
-            # Показываем кнопку "Загрузить еще", если есть еще результаты
-            self.load_more_button.setVisible(self.arxiv_service.has_more_results())
-            
-            self.statusBar().showMessage(f"Найдено статей: {len(articles)}")
-            
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при поиске: {str(e)}")
-        
-        finally:
-            # Включаем поле поиска обратно
-            self.search_input.setEnabled(True)
-
-    def load_more_results(self):
-        """Загружает следующую страницу результатов поиска."""
-        try:
-            self.load_more_button.setEnabled(False)
-            self.statusBar().showMessage("Загрузка дополнительных результатов...")
-            
-            articles = self.arxiv_service.load_more()
-            
-            if articles:
-                for article in articles:
-                    item = QListWidgetItem()
-                    item.setText(f"{article.title}\nАвторы: {', '.join(article.authors)}")
-                    item.setData(Qt.ItemDataRole.UserRole, article)
-                    self.results_list.addItem(item)
-                
-                self.statusBar().showMessage(f"Загружено еще {len(articles)} статей")
-            else:
-                self.statusBar().showMessage("Больше статей не найдено")
-                self.load_more_button.setVisible(False)
-                return
-            
-            # Обновляем видимость кнопки
-            self.load_more_button.setVisible(self.arxiv_service.has_more_results())
-            
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при загрузке результатов: {str(e)}")
-        
-        finally:
-            self.load_more_button.setEnabled(True)
-
-    def show_article_info(self, item):
-        """Отображает информацию о выбранной статье."""
-        article_id = item.data(Qt.ItemDataRole.UserRole)
-        article = self.arxiv_service.get_article(article_id)
-        if not article:
-            self.statusBar().showMessage("Не удалось получить информацию о статье")
-            return
-
-        # Формируем HTML для отображения информации о статье
-        info = f"""
-        <h2>{article.title}</h2>
-        <p><b>Авторы:</b> {", ".join(article.authors)}</p>
-        <p><b>Дата публикации:</b> {article.published.strftime("%d.%m.%Y")}</p>
-        <p><b>Категории:</b> {", ".join(article.categories)}</p>
-        <p><b>DOI:</b> {article.doi or "Нет данных"}</p>
-        <p><b>Ссылка:</b> <a href="{article.url}">{article.url}</a></p>
-        <h3>Аннотация</h3>
-        <p>{article.summary}</p>
-        """
-        self.article_details.setHtml(info)
-        self.statusBar().showMessage(f"Выбрана статья: {article.title}")
-
-    def create_summary(self):
-        """Создает краткое содержание выбранной статьи."""
-        item = self.results_list.currentItem()
-        if not item:
-            self.statusBar().showMessage("Выберите статью для создания краткого содержания")
-            return
-
-        article = item.data(Qt.ItemDataRole.UserRole)
-        self.statusBar().showMessage("Создание краткого содержания...")
-        
-        try:
-            summary = self.ai_service.create_summary(article)
-            self.tab_widget.setCurrentIndex(1)  # Переключаемся на вкладку с кратким содержанием
-            self.summary_text.setPlainText(summary)
-            self.statusBar().showMessage("Краткое содержание создано")
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при создании краткого содержания: {str(e)}")
-
-    def find_references(self):
-        """Ищет источники для выбранной статьи."""
-        item = self.results_list.currentItem()
-        if not item:
-            self.statusBar().showMessage("Выберите статью для поиска источников")
-            return
-
-        article = item.data(Qt.ItemDataRole.UserRole)
-        self.statusBar().showMessage("Поиск источников...")
-        
-        try:
-            references = self.ai_service.find_references(article)
-            self.tab_widget.setCurrentIndex(2)  # Переключаемся на вкладку с источниками
-            self.references_list.clear()
-            for ref in references:
-                self.references_list.addItem(ref)
-            self.statusBar().showMessage(f"Найдено источников: {len(references)}")
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при поиске источников: {str(e)}")
-
-    def save_article(self):
-        """Сохраняет выбранную статью в библиотеку."""
-        item = self.results_list.currentItem()
-        if not item:
-            self.statusBar().showMessage("Выберите статью для сохранения")
-            return
-        
-        article = item.data(Qt.ItemDataRole.UserRole)
-        self.statusBar().showMessage("Сохранение статьи...")
-        
-        try:
-            # Создаем путь к файлу даже если файла еще нет
-            file_path = os.path.join("storage", "articles", f"{article.id}.pdf")
-            
-            # Обновляем путь к файлу в статье
-            article.file_path = file_path
-            
-            # Сохраняем статью в хранилище
-            self.storage_service.add_article(article)
-            
-            # Обновляем список библиотеки
-            self.load_library_articles()
-            
-            self.statusBar().showMessage("Статья сохранена в библиотеку")
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при сохранении статьи: {str(e)}")
-
-    def download_article(self):
-        """Скачивает PDF версию статьи."""
-        item = self.results_list.currentItem()
-        if not item:
-            self.statusBar().showMessage("Выберите статью для скачивания")
-            return
-        
-        article = item.data(Qt.ItemDataRole.UserRole)
-        if not article:
-            return
-        
-        try:
-            # Создаем имя файла на основе ID статьи
-            file_name = os.path.join("storage", "articles", f"{article.id}.pdf")
-            
-            # Проверяем, существует ли уже файл
-            if os.path.exists(file_name):
-                reply = QMessageBox.question(
-                    self,
-                    "Файл существует",
-                    "Статья уже скачана. Хотите открыть её?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.Yes
-                )
-                
-                if reply == QMessageBox.StandardButton.Yes:
-                    os.startfile(file_name)
-                return
-
-            self.statusBar().showMessage("Скачивание статьи...")
-            
-            # Скачиваем PDF
-            self.arxiv_service.download_pdf(article, file_name)
-            self.statusBar().showMessage(f"Статья сохранена в {file_name}")
-
-            # Добавляем статью в библиотеку
-            self.storage_service.add_article(article, file_name)
-            
-            # Обновляем список библиотеки
-            self.load_library_articles()
-
-            # Спрашиваем пользователя, хочет ли он открыть статью
-            reply = QMessageBox.question(
-                self,
-                "Статья скачана",
-                "Статья успешно скачана. Открыть её?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes
-            )
-
-            if reply == QMessageBox.StandardButton.Yes:
-                os.startfile(file_name)
-            
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при скачивании статьи: {str(e)}")
-
-    def get_article_path(self, article_id):
-        """Возвращает путь к файлу статьи в локальном хранилище."""
-        return os.path.join("storage", "articles", f"{article_id}.pdf")
-
-    def is_article_downloaded(self, article_id):
-        """Проверяет, скачана ли статья."""
-        return os.path.exists(self.get_article_path(article_id))
-
-    def open_article(self, article_id):
-        """Открывает статью из локального хранилища."""
-        file_path = self.get_article_path(article_id)
-        if os.path.exists(file_path):
-            os.startfile(file_path)
-        else:
-            self.statusBar().showMessage("Статья не найдена в локальном хранилище")
-
-    def load_library_articles(self):
-        """Загружает статьи из библиотеки."""
-        # Очищаем текущий список
-        self.library_list.clear()
-        
-        try:
-            # Получаем статьи из хранилища
-            articles = self.storage_service.get_articles()
-            
-            # Выводим отладочную информацию
-            logger = logging.getLogger(__name__)
-            logger.info(f"Загружаем статьи из хранилища. Всего статей: {len(articles)}")
-            for i, article in enumerate(articles):
-                logger.info(f"Статья #{i+1}: ID={article.id}, Заголовок={article.title}, Файл={article.file_path}")
-            
-            # Если статей нет, показываем сообщение
-            if not articles:
-                logger.warning("Библиотека пуста - статьи не найдены")
-                self.statusBar().showMessage("Библиотека пуста")
-                return
-                
-            # Добавляем статьи в список
-            for article in articles:
-                item = QListWidgetItem()
-                item.setText(f"{article.title}\nАвторы: {', '.join(article.authors)}")
-                item.setData(Qt.ItemDataRole.UserRole, article)
-                self.library_list.addItem(item)
-                logger.info(f"Добавлена статья в UI список: {article.title}")
-                
-            self.statusBar().showMessage(f"Загружено статей: {len(articles)}")
-            
-            # Применяем текущий фильтр
-            self.filter_library()
-            logger.info("Фильтр библиотеки применен")
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при загрузке библиотеки: {str(e)}")
-            logger = logging.getLogger(__name__)
-            logger.error(f"Ошибка при загрузке библиотеки: {str(e)}")
-            logger.exception("Подробная информация об ошибке:")
-
-    def show_settings(self):
-        """Показывает диалог настроек."""
-        dialog = SettingsDialog(self)
-        dialog.exec()
-            
-    def settings_changed(self):
-        """Обработчик изменения настроек."""
-        self.statusBar().showMessage("Настройки сохранены. Перезапустите приложение для применения изменений.")
-
     def closeEvent(self, event):
         """Обрабатывает событие закрытия окна."""
         # Сохраняем размеры и позицию окна
@@ -1828,27 +237,329 @@ class MainWindow(QMainWindow):
         # Сохраняем текущую вкладку
         self.user_settings.set_current_tab(self.tab_widget.currentIndex())
         
-        # Сохраняем размеры разделителей
-        if hasattr(self, 'library_splitter'):
-            self.user_settings.set_splitter_sizes("library_splitter", self.library_splitter.sizes())
-        
-        if hasattr(self, 'summary_splitter'):
-            self.user_settings.set_splitter_sizes("summary_splitter", self.summary_splitter.sizes())
-        
-        if hasattr(self, 'search_splitter'):
-            self.user_settings.set_splitter_sizes("search_splitter", self.search_splitter.sizes())
-        
-        if hasattr(self, 'search_results_splitter'):
-            self.user_settings.set_splitter_sizes("search_results_splitter", self.search_results_splitter.sizes())
-        
-        if hasattr(self, 'references_splitter'):
-            self.user_settings.set_splitter_sizes("references_splitter", self.references_splitter.sizes())
-            
-        if hasattr(self, 'references_list_splitter'):
-            self.user_settings.set_splitter_sizes("references_list_splitter", self.references_list_splitter.sizes())
-        
         # Сохраняем настройки
         self.user_settings.save_settings()
         
         # Продолжаем обработку события закрытия
-        super().closeEvent(event) 
+        super().closeEvent(event)
+        
+    def show_settings(self):
+        """Показывает диалог настроек."""
+        dialog = SettingsDialog(self)
+        dialog.exec()
+            
+    def settings_changed(self):
+        """Обработчик изменения настроек."""
+        set_status_message(self.statusBar(), "Настройки сохранены. Перезапустите приложение для применения изменений.")
+        
+    # Методы для работы с поиском статей
+    @gui_exception_handler()
+    def search_articles(self, query=None, search_type=None, date_filter=None):
+        """Выполняет поиск статей."""
+        # Получаем параметры поиска, если они не переданы
+        if query is None:
+            query = self.search_tab.search_input.text()
+        if search_type is None:
+            search_type = self.search_tab.search_type.currentText()
+        if date_filter is None:
+            date_filter = self.search_tab.date_filter.currentText()
+            
+        # Проверяем, не пуст ли запрос
+        if not query:
+            set_status_message(self.statusBar(), "Введите запрос для поиска")
+            return
+            
+        # Очищаем предыдущие результаты
+        self.search_tab.clear_results()
+        self.search_tab.search_input.setEnabled(False)
+        set_status_message(self.statusBar(), "Выполняется поиск...")
+        
+        # Модифицируем запрос в зависимости от типа поиска и фильтра даты
+        modified_query = self._build_search_query(query, search_type, date_filter)
+        
+        # Выполняем поиск
+        results = self.arxiv_service.search_articles(modified_query)
+        
+        # Добавляем результаты в список
+        for article in results:
+            self.search_tab.add_search_result(article)
+            
+        set_status_message(self.statusBar(), f"Найдено статей: {len(results)}")
+        self.search_tab.search_input.setEnabled(True)
+            
+    def _build_search_query(self, query, search_type, date_filter):
+        """Формирует запрос поиска с учетом типа и фильтра даты."""
+        modified_query = query
+        
+        # Учитываем тип поиска
+        if search_type == "Название":
+            modified_query = f"ti:{query}"
+        elif search_type == "Авторы":
+            modified_query = f"au:{query}"
+        elif search_type == "Аннотация":
+            modified_query = f"abs:{query}"
+        elif search_type == "Категория":
+            modified_query = f"cat:{query}"
+            
+        # Учитываем фильтр даты
+        if date_filter == "За неделю":
+            modified_query = f"{modified_query} AND submittedDate:[NOW-7DAYS TO NOW]"
+        elif date_filter == "За месяц":
+            modified_query = f"{modified_query} AND submittedDate:[NOW-1MONTH TO NOW]"
+        elif date_filter == "За год":
+            modified_query = f"{modified_query} AND submittedDate:[NOW-1YEAR TO NOW]"
+            
+        return modified_query
+            
+    @gui_exception_handler()
+    def load_more_results(self):
+        """Загружает дополнительные результаты поиска."""
+        set_status_message(self.statusBar(), "Загрузка дополнительных результатов...")
+        
+        results = self.arxiv_service.load_more()
+        
+        # Добавляем результаты в список
+        for article in results:
+            self.search_tab.add_search_result(article)
+            
+        set_status_message(self.statusBar(), f"Загружено еще {len(results)} статей")
+            
+    # Методы для работы с кратким содержанием
+    @gui_exception_handler()
+    def create_summary(self):
+        """Создает краткое содержание для выбранной статьи."""
+        article = self.search_tab.results_list.get_selected_article()
+        if not article:
+            set_status_message(self.statusBar(), "Выберите статью для создания краткого содержания")
+            return
+            
+        set_status_message(self.statusBar(), "Создание краткого содержания...")
+        
+        summary = self.ai_service.create_summary(article)
+        self.summary_tab.set_summary(summary, article.title)
+        self.tab_widget.setCurrentIndex(1)  # Переключаемся на вкладку с кратким содержанием
+        set_status_message(self.statusBar(), "Краткое содержание создано")
+            
+    @gui_exception_handler()
+    def copy_summary(self):
+        """Копирует краткое содержание в буфер обмена."""
+        text = self.summary_tab.get_summary_text()
+        success, message = copy_to_clipboard(text)
+        set_status_message(self.statusBar(), message)
+            
+    @gui_exception_handler()
+    def save_summary(self):
+        """Сохраняет краткое содержание в файл."""
+        text = self.summary_tab.get_summary_text()
+        success, message = save_text_to_file(
+            self, 
+            text, 
+            "Сохранить краткое содержание"
+        )
+        set_status_message(self.statusBar(), message)
+                
+    # Методы для работы с источниками
+    @gui_exception_handler()
+    def find_references(self):
+        """Ищет источники для выбранной статьи."""
+        article = self.search_tab.results_list.get_selected_article()
+        if not article:
+            set_status_message(self.statusBar(), "Выберите статью для поиска источников")
+            return
+            
+        set_status_message(self.statusBar(), "Поиск источников...")
+        
+        references = self.ai_service.find_references(article)
+        self.tab_widget.setCurrentIndex(2)  # Переключаемся на вкладку с источниками
+        self.references_tab.clear_references()
+        for ref in references:
+            self.references_tab.add_reference(ref)
+        set_status_message(self.statusBar(), f"Найдено источников: {len(references)}")
+            
+    @gui_exception_handler()
+    def copy_references(self):
+        """Копирует список источников в буфер обмена."""
+        references = self.references_tab.get_references()
+        if references:
+            text = "\n\n".join(references)
+            success, message = copy_to_clipboard(text)
+            set_status_message(self.statusBar(), message)
+        else:
+            set_status_message(self.statusBar(), "Нет источников для копирования")
+            
+    @gui_exception_handler()
+    def save_references(self):
+        """Сохраняет список источников в файл."""
+        references = self.references_tab.get_references()
+        if not references:
+            set_status_message(self.statusBar(), "Нет источников для сохранения")
+            return
+
+        text = "\n\n".join(references)
+        success, message = save_text_to_file(
+            self, 
+            text, 
+            "Сохранить источники"
+        )
+        set_status_message(self.statusBar(), message)
+                
+    # Методы для работы с библиотекой
+    @gui_exception_handler()
+    def load_library_articles(self):
+        """Загружает статьи из библиотеки."""
+        # Очищаем текущий список
+        self.library_tab.clear_library()
+        
+        # Получаем статьи из хранилища
+        articles = self.storage_service.get_articles()
+        
+        # Выводим отладочную информацию
+        logger = logging.getLogger(__name__)
+        logger.info(f"Загружаем статьи из хранилища. Всего статей: {len(articles)}")
+        
+        # Если статей нет, показываем сообщение
+        if not articles:
+            logger.warning("Библиотека пуста - статьи не найдены")
+            set_status_message(self.statusBar(), "Библиотека пуста")
+            return
+            
+        # Добавляем статьи в список
+        for article in articles:
+            self.library_tab.add_library_article(article)
+            
+        set_status_message(self.statusBar(), f"Загружено статей: {len(articles)}")
+            
+    @gui_exception_handler()
+    def filter_library(self, filter_text):
+        """Фильтрует статьи в библиотеке по тексту."""
+        articles = self.storage_service.get_articles()
+        self.library_tab.clear_library()
+        
+        for article in articles:
+            if (
+                filter_text.lower() in article.title.lower() or
+                filter_text.lower() in ", ".join(article.authors).lower() or
+                filter_text.lower() in ", ".join(article.categories).lower() or
+                (article.summary and filter_text.lower() in article.summary.lower())
+            ):
+                self.library_tab.add_library_article(article)
+                
+    @gui_exception_handler()
+    def delete_from_library(self):
+        """Удаляет выбранную статью из библиотеки."""
+        article = self.library_tab.get_selected_article()
+        if not article:
+            set_status_message(self.statusBar(), "Выберите статью для удаления")
+            return
+            
+        # Запрашиваем подтверждение
+        if confirm_action(
+            self,
+            "Удаление статьи",
+            f"Вы уверены, что хотите удалить статью '{article.title}'?"
+        ):
+            self.storage_service.remove_article(article.id)
+            self.load_library_articles()
+            set_status_message(self.statusBar(), "Статья удалена из библиотеки")
+                
+    @gui_exception_handler()
+    def export_article(self):
+        """Экспортирует выбранную статью."""
+        article = self.library_tab.get_selected_article()
+        if not article:
+            set_status_message(self.statusBar(), "Выберите статью для экспорта")
+            return
+            
+        success, message = export_article_to_file(
+            self, 
+            article, 
+            "Экспортировать статью"
+        )
+        set_status_message(self.statusBar(), message)
+                
+    @gui_exception_handler()
+    def save_article(self):
+        """Сохраняет метаданные выбранной статьи в библиотеку."""
+        article = self.search_tab.results_list.get_selected_article()
+        if not article:
+            set_status_message(self.statusBar(), "Выберите статью для сохранения")
+            return
+        
+        set_status_message(self.statusBar(), "Сохранение статьи в библиотеку...")
+        
+        # Проверяем, существует ли PDF файл
+        pdf_path = os.path.join("storage", "articles", f"{article.id}.pdf")
+        if os.path.exists(pdf_path):
+            # Если файл существует, сохраняем путь к нему
+            article.file_path = pdf_path
+        else:
+            # Иначе просто сохраняем метаданные без файла
+            article.file_path = None
+        
+        # Сохраняем статью в хранилище
+        self.storage_service.add_article(article)
+        
+        # Обновляем список библиотеки
+        self.load_library_articles()
+        
+        set_status_message(self.statusBar(), "Метаданные статьи сохранены в библиотеку")
+        
+        # Предлагаем скачать PDF, если его нет
+        if not os.path.exists(pdf_path):
+            if confirm_action(
+                self,
+                "Скачать PDF",
+                "Хотите скачать PDF-версию статьи?",
+                default_yes=True
+            ):
+                self.download_article()
+            
+    @gui_exception_handler()
+    def download_article(self):
+        """Скачивает PDF версию статьи."""
+        article = self.search_tab.results_list.get_selected_article()
+        if not article:
+            # Если нет выбранной статьи в результатах поиска, проверяем библиотеку
+            article = self.library_tab.get_selected_article()
+            if not article:
+                set_status_message(self.statusBar(), "Выберите статью для скачивания")
+                return
+            
+        # Создаем имя файла на основе ID статьи
+        file_name = os.path.join("storage", "articles", f"{article.id}.pdf")
+        
+        # Проверяем, существует ли уже файл
+        if os.path.exists(file_name):
+            if confirm_action(
+                self,
+                "Файл существует",
+                "Статья уже скачана. Хотите открыть её?",
+                default_yes=True
+            ):
+                success, message = open_file(file_name)
+                set_status_message(self.statusBar(), message)
+            return
+
+        set_status_message(self.statusBar(), "Скачивание статьи...")
+        
+        # Скачиваем PDF
+        self.arxiv_service.download_pdf(article, file_name)
+        set_status_message(self.statusBar(), f"Статья сохранена в {file_name}")
+
+        # Обновляем путь к файлу в статье и сохраняем в библиотеку
+        article.file_path = file_name
+        self.storage_service.add_article(article)
+        
+        # Обновляем список библиотеки
+        self.load_library_articles()
+
+        # Спрашиваем пользователя, хочет ли он открыть статью
+        if confirm_action(
+            self,
+            "Статья скачана",
+            "Статья успешно скачана. Открыть её?",
+            default_yes=True
+        ):
+            success, message = open_file(file_name)
+            if not success:
+                set_status_message(self.statusBar(), message) 

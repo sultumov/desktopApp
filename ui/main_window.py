@@ -5,11 +5,12 @@ from PyQt6.QtWidgets import (
     QStatusBar, QComboBox, QDialog, QFormLayout, QDialogButtonBox,
     QFrame, QToolBar, QToolButton, QMessageBox, QApplication, QListWidgetItem
 )
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QIcon, QFont, QAction
 import os
 from .styles import MAIN_STYLE, DIALOG_STYLE
-from services import ArxivService, AIService, StorageService
+from .custom_widgets import CustomSplitter, CollapsiblePanel
+from services import ArxivService, AIService, StorageService, UserSettings
 import logging
 
 class SettingsDialog(QDialog):
@@ -197,10 +198,20 @@ class MainWindow(QMainWindow):
         self.arxiv_service = ArxivService()
         self.ai_service = AIService()
         self.storage_service = StorageService()
+        self.user_settings = UserSettings()
 
         # Настройка главного окна
         self.setWindowTitle("ArXiv Assistant")
         self.setMinimumSize(1200, 800)
+
+        # Восстановление размера и позиции окна
+        window_size = self.user_settings.get_window_size()
+        window_position = self.user_settings.get_window_position()
+        
+        if window_size:
+            self.resize(window_size[0], window_size[1])
+        if window_position:
+            self.move(window_position[0], window_position[1])
 
         # Создание центрального виджета
         central_widget = QWidget()
@@ -214,7 +225,7 @@ class MainWindow(QMainWindow):
 
         # Создание панели инструментов
         toolbar = QToolBar()
-        toolbar.setMovable(False)
+        toolbar.setMovable(True)  # Разрешаем перемещение панели инструментов
         toolbar.setStyleSheet("""
             QToolBar {
                 background: white;
@@ -280,6 +291,9 @@ class MainWindow(QMainWindow):
         """)
         layout.addWidget(self.tab_widget)
 
+        # Восстановление текущей вкладки
+        current_tab = self.user_settings.get_current_tab()
+
         # Добавление вкладок
         self.tab_widget.addTab(
             self.create_search_tab(),
@@ -301,6 +315,13 @@ class MainWindow(QMainWindow):
             QIcon("ui/icons/library-tab.svg"),
             "Моя библиотека"
         )
+        
+        # Установка текущей вкладки
+        if current_tab < self.tab_widget.count():
+            self.tab_widget.setCurrentIndex(current_tab)
+        
+        # Отслеживание изменения вкладки
+        self.tab_widget.currentChanged.connect(self.tab_changed)
 
         # Создание строки состояния
         self.statusBar().setStyleSheet("""
@@ -314,6 +335,38 @@ class MainWindow(QMainWindow):
         
         # Загружаем статьи в библиотеку при запуске
         self.load_library_articles()
+        
+        # Таймер для сохранения настроек при изменении размера окна
+        self.resize_timer = QTimer()
+        self.resize_timer.setInterval(500)  # Задержка в 500 мс
+        self.resize_timer.setSingleShot(True)
+        self.resize_timer.timeout.connect(self.save_window_size)
+
+    def resizeEvent(self, event):
+        """Обрабатывает событие изменения размера окна."""
+        super().resizeEvent(event)
+        self.resize_timer.start()
+        
+    def moveEvent(self, event):
+        """Обрабатывает событие перемещения окна."""
+        super().moveEvent(event)
+        self.resize_timer.start()
+        
+    def save_window_size(self):
+        """Сохраняет размер и позицию окна."""
+        self.user_settings.set_window_size(self.width(), self.height())
+        self.user_settings.set_window_position(self.x(), self.y())
+        self.user_settings.save_settings()
+        
+    def tab_changed(self, index):
+        """Обрабатывает изменение текущей вкладки."""
+        self.user_settings.set_current_tab(index)
+        self.user_settings.save_settings()
+        
+    def splitter_sizes_changed(self, name, sizes):
+        """Обрабатывает изменение размеров разделителей."""
+        self.user_settings.set_splitter_sizes(name, sizes)
+        self.user_settings.save_settings()
 
     def create_search_tab(self):
         """Создает вкладку поиска."""
@@ -321,6 +374,13 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(search_tab)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+
+        # Создаем разделитель для верхней и нижней части
+        self.search_splitter = CustomSplitter(Qt.Orientation.Vertical, "search_splitter")
+        self.search_splitter.splitterMoved.connect(self.splitter_sizes_changed)
+        
+        # Восстановление размеров разделителя
+        saved_sizes = self.user_settings.get_splitter_sizes("search_splitter")
 
         # Создаем панель поиска
         search_panel = QWidget()
@@ -431,77 +491,61 @@ class MainWindow(QMainWindow):
         """)
         filters_layout.addWidget(self.date_filter)
 
-        # Фильтр по сортировке
-        self.sort_filter = QComboBox()
-        self.sort_filter.addItems(["По релевантности", "По дате", "По цитируемости"])
-        self.sort_filter.setFixedWidth(140)
-        self.sort_filter.setStyleSheet("""
-            QComboBox {
-                border: 1px solid #E0E0E0;
-                border-radius: 4px;
-                padding: 4px 8px;
-                background: white;
-                color: #333333;
-            }
-            QComboBox:hover {
-                border-color: #2196F3;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 20px;
-            }
-            QComboBox::down-arrow {
-                image: url(ui/icons/down-arrow.svg);
-                width: 12px;
-                height: 12px;
-            }
-        """)
-        filters_layout.addWidget(self.sort_filter)
-
-        search_container_layout.addLayout(filters_layout)
-
         # Кнопка поиска
-        search_button = QPushButton()
-        search_button.setIcon(QIcon("ui/icons/search.svg"))
-        search_button.setToolTip("Поиск")
-        search_button.clicked.connect(self.search_articles)
+        search_button = QPushButton("Найти")
         search_button.setStyleSheet("""
             QPushButton {
-                background: #2196F3;
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 8px 16px;
                 border-radius: 4px;
-                padding: 6px;
-                min-width: 32px;
-                min-height: 32px;
+                min-width: 100px;
             }
             QPushButton:hover {
-                background: #1976D2;
+                background-color: #1976D2;
             }
             QPushButton:pressed {
-                background: #0D47A1;
+                background-color: #0D47A1;
             }
         """)
-        search_container_layout.addWidget(search_button)
+        search_button.clicked.connect(self.search_articles)
+        filters_layout.addWidget(search_button)
 
+        filters_layout.addStretch()
+        search_container_layout.addLayout(filters_layout)
         search_layout.addWidget(search_container)
 
-        # Добавляем панель поиска в основной layout
-        layout.addWidget(search_panel)
+        # Создаем сворачиваемую панель для поиска
+        search_collapsible = CollapsiblePanel("Поиск статей")
+        search_collapsible.set_content(search_panel)
+        self.search_splitter.addWidget(search_collapsible)
 
-        # Создаем сплиттер для результатов и деталей
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setChildrenCollapsible(False)
+        # Создаем разделитель для списка и деталей
+        self.search_results_splitter = CustomSplitter(Qt.Orientation.Horizontal, "search_results_splitter")
+        self.search_results_splitter.splitterMoved.connect(self.splitter_sizes_changed)
+        
+        # Восстановление размеров разделителя результатов
+        results_saved_sizes = self.user_settings.get_splitter_sizes("search_results_splitter")
 
-        # Панель результатов
+        # Список результатов
         results_panel = QWidget()
         results_layout = QVBoxLayout(results_panel)
-        results_layout.setContentsMargins(20, 20, 20, 20)
-        results_layout.setSpacing(20)
+        results_layout.setContentsMargins(16, 16, 16, 16)
+        results_layout.setSpacing(16)
 
-        results_label = QLabel("Результаты поиска")
-        results_label.setStyleSheet("font-weight: bold; font-size: 16px;")
-        results_layout.addWidget(results_label)
+        # Заголовок результатов
+        results_title = QLabel("Результаты поиска")
+        results_title.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                color: #333333;
+            }
+        """)
+        results_layout.addWidget(results_title)
 
-        # Список результатов поиска
+        # Список результатов
         self.results_list = QListWidget()
         self.results_list.itemClicked.connect(self.show_article_info)
         self.results_list.setStyleSheet("""
@@ -519,9 +563,6 @@ class MainWindow(QMainWindow):
                 background: #F8F9FA;
                 color: #333333;
             }
-            QListWidget::item:last {
-                border-bottom: none;
-            }
             QListWidget::item:selected {
                 background: #E3F2FD;
                 color: #1565C0;
@@ -535,45 +576,53 @@ class MainWindow(QMainWindow):
         """)
         results_layout.addWidget(self.results_list)
 
-        # Кнопка "Загрузить еще"
-        self.load_more_button = QPushButton("Загрузить еще")
-        self.load_more_button.setVisible(False)
-        self.load_more_button.clicked.connect(self.load_more_results)
-        self.load_more_button.setStyleSheet("""
+        # Кнопка загрузки дополнительных результатов
+        load_more_button = QPushButton("Загрузить еще")
+        load_more_button.setStyleSheet("""
             QPushButton {
-                background: #F5F5F5;
-                border: 1px solid #E0E0E0;
-                border-radius: 4px;
+                background-color: #E0E0E0;
+                color: #333333;
+                border: none;
                 padding: 8px 16px;
-                color: #1565C0;
-                font-weight: bold;
-                margin: 8px;
+                border-radius: 4px;
+                min-width: 200px;
             }
             QPushButton:hover {
-                background: #E3F2FD;
-                border-color: #90CAF9;
+                background-color: #BDBDBD;
             }
             QPushButton:pressed {
-                background: #BBDEFB;
+                background-color: #9E9E9E;
             }
         """)
-        results_layout.addWidget(self.load_more_button)
+        load_more_button.clicked.connect(self.load_more_results)
+        results_layout.addWidget(load_more_button, 0, Qt.AlignmentFlag.AlignCenter)
 
-        splitter.addWidget(results_panel)
+        # Создаем сворачиваемую панель для результатов
+        results_collapsible = CollapsiblePanel("Результаты поиска")
+        results_collapsible.set_content(results_panel)
+        self.search_results_splitter.addWidget(results_collapsible)
 
-        # Панель деталей
+        # Панель с деталями статьи
         details_panel = QWidget()
         details_layout = QVBoxLayout(details_panel)
-        details_layout.setContentsMargins(20, 20, 20, 20)
-        details_layout.setSpacing(20)
+        details_layout.setContentsMargins(16, 16, 16, 16)
+        details_layout.setSpacing(16)
 
-        details_label = QLabel("Информация о статье")
-        details_label.setStyleSheet("font-weight: bold; font-size: 16px;")
-        details_layout.addWidget(details_label)
+        # Заголовок деталей
+        details_title = QLabel("Информация о статье")
+        details_title.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                color: #333333;
+            }
+        """)
+        details_layout.addWidget(details_title)
 
-        self.article_info = QTextEdit()
-        self.article_info.setReadOnly(True)
-        self.article_info.setStyleSheet("""
+        # Текстовое поле для деталей
+        self.article_details = QTextEdit()
+        self.article_details.setReadOnly(True)
+        self.article_details.setStyleSheet("""
             QTextEdit {
                 border: 1px solid #BDBDBD;
                 border-radius: 4px;
@@ -584,107 +633,127 @@ class MainWindow(QMainWindow):
                 color: #333333;
             }
         """)
-        details_layout.addWidget(self.article_info)
-        
-        # Кнопки действий
-        actions_layout = QHBoxLayout()
-        actions_layout.setSpacing(10)
+        details_layout.addWidget(self.article_details)
 
-        # Кнопка скачивания PDF
-        download_button = QPushButton()
-        download_button.setIcon(QIcon("ui/icons/download.svg"))
-        download_button.setToolTip("Скачать PDF")
-        download_button.clicked.connect(self.download_article)
-        download_button.setStyleSheet("""
-            QPushButton {
-                background: #4CAF50;
-                border-radius: 4px;
-                padding: 6px;
-                min-width: 32px;
-                min-height: 32px;
-            }
-            QPushButton:hover {
-                background: #388E3C;
-            }
-            QPushButton:pressed {
-                background: #1B5E20;
-            }
-        """)
-        actions_layout.addWidget(download_button)
+        # Панель действий
+        actions_panel = QWidget()
+        actions_layout = QHBoxLayout(actions_panel)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(8)
 
-        summary_button = QPushButton()
+        # Кнопка создания краткого содержания
+        summary_button = QPushButton("Создать краткое содержание")
         summary_button.setIcon(QIcon("ui/icons/summary.svg"))
-        summary_button.setToolTip("Создать краткое содержание")
-        summary_button.clicked.connect(self.create_summary)
         summary_button.setStyleSheet("""
             QPushButton {
-                background: #2196F3;
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 8px 16px;
                 border-radius: 4px;
-                padding: 6px;
-                min-width: 32px;
-                min-height: 32px;
+                min-width: 200px;
             }
             QPushButton:hover {
-                background: #1976D2;
+                background-color: #1976D2;
             }
             QPushButton:pressed {
-                background: #0D47A1;
+                background-color: #0D47A1;
             }
         """)
+        summary_button.clicked.connect(self.create_summary)
         actions_layout.addWidget(summary_button)
 
-        refs_button = QPushButton()
-        refs_button.setIcon(QIcon("ui/icons/references.svg"))
-        refs_button.setToolTip("Найти источники")
-        refs_button.clicked.connect(self.find_references)
-        refs_button.setStyleSheet("""
+        # Кнопка поиска источников
+        references_button = QPushButton("Найти источники")
+        references_button.setIcon(QIcon("ui/icons/references.svg"))
+        references_button.setStyleSheet("""
             QPushButton {
-                background: #FF9800;
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 8px 16px;
                 border-radius: 4px;
-                padding: 6px;
-                min-width: 32px;
-                min-height: 32px;
+                min-width: 200px;
             }
             QPushButton:hover {
-                background: #F57C00;
+                background-color: #1976D2;
             }
             QPushButton:pressed {
-                background: #E65100;
+                background-color: #0D47A1;
             }
         """)
-        actions_layout.addWidget(refs_button)
+        references_button.clicked.connect(self.find_references)
+        actions_layout.addWidget(references_button)
 
-        save_button = QPushButton()
+        # Кнопка сохранения
+        save_button = QPushButton("Сохранить в библиотеку")
         save_button.setIcon(QIcon("ui/icons/save.svg"))
-        save_button.setToolTip("Сохранить в библиотеку")
-        save_button.clicked.connect(self.save_article)
         save_button.setStyleSheet("""
             QPushButton {
-                background: #9C27B0;
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                padding: 8px 16px;
                 border-radius: 4px;
-                padding: 6px;
-                min-width: 32px;
-                min-height: 32px;
+                min-width: 200px;
             }
             QPushButton:hover {
-                background: #7B1FA2;
+                background-color: #388E3C;
             }
             QPushButton:pressed {
-                background: #4A148C;
+                background-color: #1B5E20;
             }
         """)
+        save_button.clicked.connect(self.save_article)
         actions_layout.addWidget(save_button)
 
-        actions_layout.addStretch()
+        # Кнопка загрузки
+        download_button = QPushButton("Скачать PDF")
+        download_button.setIcon(QIcon("ui/icons/download.svg"))
+        download_button.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9800;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                min-width: 200px;
+            }
+            QPushButton:hover {
+                background-color: #F57C00;
+            }
+            QPushButton:pressed {
+                background-color: #E65100;
+            }
+        """)
+        download_button.clicked.connect(self.download_article)
+        actions_layout.addWidget(download_button)
+
         details_layout.addLayout(actions_layout)
 
-        splitter.addWidget(details_panel)
+        # Создаем сворачиваемую панель для деталей
+        details_collapsible = CollapsiblePanel("Детали статьи")
+        details_collapsible.set_content(details_panel)
+        self.search_results_splitter.addWidget(details_collapsible)
 
-        # Устанавливаем соотношение размеров панелей
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
+        # Установка пропорций разделителя результатов
+        if results_saved_sizes:
+            self.search_results_splitter.setSizes(results_saved_sizes)
+        else:
+            self.search_results_splitter.setStretchFactor(0, 1)  # Результаты
+            self.search_results_splitter.setStretchFactor(1, 2)  # Детали
 
-        layout.addWidget(splitter)
+        self.search_splitter.addWidget(self.search_results_splitter)
+
+        # Установка пропорций основного разделителя
+        if saved_sizes:
+            self.search_splitter.setSizes(saved_sizes)
+        else:
+            self.search_splitter.setStretchFactor(0, 1)  # Поиск
+            self.search_splitter.setStretchFactor(1, 4)  # Результаты и детали
+
+        layout.addWidget(self.search_splitter)
+
         return search_tab
     
     def create_summary_tab(self):
@@ -693,6 +762,19 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(16)
+
+        # Создаем разделитель для верхней и нижней части
+        self.summary_splitter = CustomSplitter(Qt.Orientation.Vertical, "summary_splitter")
+        self.summary_splitter.splitterMoved.connect(self.splitter_sizes_changed)
+        
+        # Восстановление размеров разделителя
+        saved_sizes = self.user_settings.get_splitter_sizes("summary_splitter")
+
+        # Верхняя панель (заголовок и описание)
+        top_panel = QWidget()
+        top_layout = QVBoxLayout(top_panel)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(16)
 
         # Заголовок
         title_label = QLabel("Краткое содержание")
@@ -703,7 +785,7 @@ class MainWindow(QMainWindow):
                 color: #333333;
             }
         """)
-        layout.addWidget(title_label)
+        top_layout.addWidget(title_label)
 
         # Описание
         description = QLabel(
@@ -718,7 +800,18 @@ class MainWindow(QMainWindow):
                 line-height: 1.5;
             }
         """)
-        layout.addWidget(description)
+        top_layout.addWidget(description)
+        
+        # Создаем сворачиваемую панель для заголовка
+        header_collapsible = CollapsiblePanel("Информация")
+        header_collapsible.set_content(top_panel)
+        self.summary_splitter.addWidget(header_collapsible)
+        
+        # Нижняя панель (текст и кнопки)
+        bottom_panel = QWidget()
+        bottom_layout = QVBoxLayout(bottom_panel)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setSpacing(8)
 
         # Текстовое поле для краткого содержания
         self.summary_text = QTextEdit()
@@ -734,7 +827,7 @@ class MainWindow(QMainWindow):
                 color: #333333;
             }
         """)
-        layout.addWidget(self.summary_text)
+        bottom_layout.addWidget(self.summary_text)
 
         # Панель действий
         actions_panel = QWidget()
@@ -785,7 +878,21 @@ class MainWindow(QMainWindow):
         actions_layout.addWidget(save_button)
 
         actions_layout.addStretch()
-        layout.addWidget(actions_panel)
+        bottom_layout.addWidget(actions_panel)
+        
+        # Создаем сворачиваемую панель для содержимого
+        content_collapsible = CollapsiblePanel("Содержание")
+        content_collapsible.set_content(bottom_panel)
+        self.summary_splitter.addWidget(content_collapsible)
+        
+        # Установка пропорций разделителя
+        if saved_sizes:
+            self.summary_splitter.setSizes(saved_sizes)
+        else:
+            self.summary_splitter.setStretchFactor(0, 1)  # Заголовок
+            self.summary_splitter.setStretchFactor(1, 3)  # Содержание
+
+        layout.addWidget(self.summary_splitter)
 
         return tab
 
@@ -828,6 +935,19 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(16)
 
+        # Создаем разделитель для верхней и нижней части
+        self.references_splitter = CustomSplitter(Qt.Orientation.Vertical, "references_splitter")
+        self.references_splitter.splitterMoved.connect(self.splitter_sizes_changed)
+        
+        # Восстановление размеров разделителя
+        saved_sizes = self.user_settings.get_splitter_sizes("references_splitter")
+
+        # Верхняя панель с заголовком и описанием
+        top_panel = QWidget()
+        top_layout = QVBoxLayout(top_panel)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(16)
+
         # Заголовок
         title_label = QLabel("Поиск источников")
         title_label.setStyleSheet("""
@@ -837,7 +957,7 @@ class MainWindow(QMainWindow):
                 color: #333333;
             }
         """)
-        layout.addWidget(title_label)
+        top_layout.addWidget(title_label)
 
         # Описание
         description = QLabel(
@@ -852,9 +972,37 @@ class MainWindow(QMainWindow):
                 line-height: 1.5;
             }
         """)
-        layout.addWidget(description)
+        top_layout.addWidget(description)
+        
+        # Создаем сворачиваемую панель для заголовка
+        header_collapsible = CollapsiblePanel("Информация")
+        header_collapsible.set_content(top_panel)
+        self.references_splitter.addWidget(header_collapsible)
+
+        # Создаем разделитель для списка и деталей
+        self.references_list_splitter = CustomSplitter(Qt.Orientation.Horizontal, "references_list_splitter")
+        self.references_list_splitter.splitterMoved.connect(self.splitter_sizes_changed)
+        
+        # Восстановление размеров разделителя списка
+        list_saved_sizes = self.user_settings.get_splitter_sizes("references_list_splitter")
 
         # Список источников
+        list_panel = QWidget()
+        list_layout = QVBoxLayout(list_panel)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(8)
+
+        # Заголовок списка
+        list_title = QLabel("Список источников")
+        list_title.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                color: #333333;
+            }
+        """)
+        list_layout.addWidget(list_title)
+
         self.references_list = QListWidget()
         self.references_list.setStyleSheet("""
             QListWidget {
@@ -885,7 +1033,45 @@ class MainWindow(QMainWindow):
                 color: #1565C0;
             }
         """)
-        layout.addWidget(self.references_list)
+        list_layout.addWidget(self.references_list)
+        
+        # Создаем сворачиваемую панель для списка
+        list_collapsible = CollapsiblePanel("Список источников")
+        list_collapsible.set_content(list_panel)
+        self.references_list_splitter.addWidget(list_collapsible)
+
+        # Детали источников
+        details_panel = QWidget()
+        details_layout = QVBoxLayout(details_panel)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(8)
+        
+        # Заголовок деталей
+        details_title = QLabel("Детали источника")
+        details_title.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                color: #333333;
+            }
+        """)
+        details_layout.addWidget(details_title)
+
+        # Текстовое поле для деталей
+        self.reference_details = QTextEdit()
+        self.reference_details.setReadOnly(True)
+        self.reference_details.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #BDBDBD;
+                border-radius: 4px;
+                background: white;
+                padding: 16px;
+                font-size: 14px;
+                line-height: 1.6;
+                color: #333333;
+            }
+        """)
+        details_layout.addWidget(self.reference_details)
 
         # Панель действий
         actions_panel = QWidget()
@@ -894,49 +1080,74 @@ class MainWindow(QMainWindow):
         actions_layout.setSpacing(8)
 
         # Кнопка копирования
-        copy_button = QPushButton()
+        copy_button = QPushButton("Копировать")
         copy_button.setIcon(QIcon("ui/icons/copy.svg"))
-        copy_button.setToolTip("Копировать в буфер обмена")
         copy_button.clicked.connect(self.copy_references)
-        copy_button.setFixedSize(40, 40)
         copy_button.setStyleSheet("""
             QPushButton {
-                background: #2196F3;
-                border-radius: 20px;
-                padding: 8px;
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                min-width: 120px;
             }
             QPushButton:hover {
-                background: #1976D2;
+                background-color: #1976D2;
             }
             QPushButton:pressed {
-                background: #0D47A1;
+                background-color: #0D47A1;
             }
         """)
         actions_layout.addWidget(copy_button)
 
         # Кнопка сохранения
-        save_button = QPushButton()
+        save_button = QPushButton("Сохранить")
         save_button.setIcon(QIcon("ui/icons/save.svg"))
-        save_button.setToolTip("Сохранить в файл")
         save_button.clicked.connect(self.save_references)
-        save_button.setFixedSize(40, 40)
         save_button.setStyleSheet("""
             QPushButton {
-                background: #2196F3;
-                border-radius: 20px;
-                padding: 8px;
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                min-width: 120px;
             }
             QPushButton:hover {
-                background: #1976D2;
+                background-color: #388E3C;
             }
             QPushButton:pressed {
-                background: #0D47A1;
+                background-color: #1B5E20;
             }
         """)
         actions_layout.addWidget(save_button)
 
         actions_layout.addStretch()
-        layout.addWidget(actions_panel)
+        details_layout.addLayout(actions_panel)
+        
+        # Создаем сворачиваемую панель для деталей
+        details_collapsible = CollapsiblePanel("Детали источника")
+        details_collapsible.set_content(details_panel)
+        self.references_list_splitter.addWidget(details_collapsible)
+
+        # Установка пропорций разделителя списка
+        if list_saved_sizes:
+            self.references_list_splitter.setSizes(list_saved_sizes)
+        else:
+            self.references_list_splitter.setStretchFactor(0, 1)  # Список
+            self.references_list_splitter.setStretchFactor(1, 2)  # Детали
+
+        self.references_splitter.addWidget(self.references_list_splitter)
+
+        # Установка пропорций основного разделителя
+        if saved_sizes:
+            self.references_splitter.setSizes(saved_sizes)
+        else:
+            self.references_splitter.setStretchFactor(0, 1)  # Заголовок
+            self.references_splitter.setStretchFactor(1, 4)  # Список и детали
+
+        layout.addWidget(self.references_splitter)
 
         return tab
 
@@ -1012,8 +1223,12 @@ class MainWindow(QMainWindow):
         """)
         layout.addWidget(description)
 
-        # Разделитель для списка и деталей
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        # Настраиваемый разделитель для списка и деталей
+        self.library_splitter = CustomSplitter(Qt.Orientation.Horizontal, "library_splitter")
+        self.library_splitter.splitterMoved.connect(self.splitter_sizes_changed)
+
+        # Восстановление размеров разделителя
+        saved_sizes = self.user_settings.get_splitter_sizes("library_splitter")
 
         # Панель со списком статей
         list_panel = QWidget()
@@ -1099,7 +1314,11 @@ class MainWindow(QMainWindow):
         """)
         list_layout.addWidget(self.library_list)
 
-        splitter.addWidget(list_panel)
+        # Создаем сворачиваемую панель для списка
+        list_collapsible = CollapsiblePanel("Список статей")
+        list_collapsible.set_content(list_panel)
+        
+        self.library_splitter.addWidget(list_collapsible)
 
         # Панель с деталями статьи
         details_panel = QWidget()
@@ -1171,15 +1390,23 @@ class MainWindow(QMainWindow):
         actions_layout.addWidget(export_button)
 
         actions_layout.addStretch()
-        details_layout.addLayout(actions_layout)
+        details_layout.addLayout(actions_panel)
 
-        splitter.addWidget(details_panel)
+        # Создаем сворачиваемую панель для деталей
+        details_collapsible = CollapsiblePanel("Детали статьи")
+        details_collapsible.set_content(details_panel)
+        
+        self.library_splitter.addWidget(details_collapsible)
 
         # Установка пропорций разделителя
-        splitter.setStretchFactor(0, 1)  # Список
-        splitter.setStretchFactor(1, 2)  # Детали
+        if saved_sizes:
+            self.library_splitter.setSizes(saved_sizes)
+        else:
+            self.library_splitter.setStretchFactor(0, 1)  # Список
+            self.library_splitter.setStretchFactor(1, 2)  # Детали
 
-        layout.addWidget(splitter)
+        layout.addWidget(self.library_splitter)
+
         return tab
     
     def filter_library(self):
@@ -1324,7 +1551,7 @@ class MainWindow(QMainWindow):
         # Отключаем кнопку поиска и показываем статус
         self.search_input.setEnabled(False)
         self.results_list.clear()
-        self.article_info.clear()
+        self.article_details.clear()
         self.statusBar().showMessage("Выполняется поиск...")
         
         try:
@@ -1386,39 +1613,24 @@ class MainWindow(QMainWindow):
 
     def show_article_info(self, item):
         """Отображает информацию о выбранной статье."""
-        article = item.data(Qt.ItemDataRole.UserRole)
+        article_id = item.data(Qt.ItemDataRole.UserRole)
+        article = self.arxiv_service.get_article(article_id)
         if not article:
+            self.statusBar().showMessage("Не удалось получить информацию о статье")
             return
-        
-        # Проверяем, скачана ли статья
-        is_downloaded = self.is_article_downloaded(article.id)
-        download_status = "✓ Статья скачана" if is_downloaded else "✗ Статья не скачана"
 
-        # Форматируем дату публикации
-        published_date = article.published
-        if published_date:
-            if isinstance(published_date, str):
-                # Если это строка, просто используем её
-                formatted_date = published_date
-            else:
-                # Если это объект datetime, форматируем
-                try:
-                    formatted_date = published_date.strftime('%d.%m.%Y')
-                except:
-                    formatted_date = str(published_date)
-        else:
-            formatted_date = "Не указана"
-
-        info = f"""<h2>{article.title}</h2>
-<p><b>Авторы:</b> {', '.join(article.authors)}</p>
-<p><b>Дата публикации:</b> {formatted_date}</p>
-<p><b>DOI:</b> {article.doi or 'Не указан'}</p>
-<p><b>Категории:</b> {', '.join(article.categories)}</p>
-<p><b>Статус:</b> {download_status}</p>
-<h3>Аннотация</h3>
-<p>{article.summary}</p>
-"""
-        self.article_info.setHtml(info)
+        # Формируем HTML для отображения информации о статье
+        info = f"""
+        <h2>{article.title}</h2>
+        <p><b>Авторы:</b> {", ".join(article.authors)}</p>
+        <p><b>Дата публикации:</b> {article.published.strftime("%d.%m.%Y")}</p>
+        <p><b>Категории:</b> {", ".join(article.categories)}</p>
+        <p><b>DOI:</b> {article.doi or "Нет данных"}</p>
+        <p><b>Ссылка:</b> <a href="{article.url}">{article.url}</a></p>
+        <h3>Аннотация</h3>
+        <p>{article.summary}</p>
+        """
+        self.article_details.setHtml(info)
         self.statusBar().showMessage(f"Выбрана статья: {article.title}")
 
     def create_summary(self):
@@ -1607,58 +1819,36 @@ class MainWindow(QMainWindow):
         """Обработчик изменения настроек."""
         self.statusBar().showMessage("Настройки сохранены. Перезапустите приложение для применения изменений.")
 
-    def download_article(self):
-        """Скачивает PDF версию статьи."""
-        item = self.results_list.currentItem()
-        if not item:
-            self.statusBar().showMessage("Выберите статью для скачивания")
-            return
-
-        article = item.data(Qt.ItemDataRole.UserRole)
-        if not article:
-            return
+    def closeEvent(self, event):
+        """Обрабатывает событие закрытия окна."""
+        # Сохраняем размеры и позицию окна
+        self.user_settings.set_window_size(self.width(), self.height())
+        self.user_settings.set_window_position(self.x(), self.y())
         
-        try:
-            # Создаем имя файла на основе ID статьи
-            file_name = os.path.join("storage", "articles", f"{article.id}.pdf")
+        # Сохраняем текущую вкладку
+        self.user_settings.set_current_tab(self.tab_widget.currentIndex())
+        
+        # Сохраняем размеры разделителей
+        if hasattr(self, 'library_splitter'):
+            self.user_settings.set_splitter_sizes("library_splitter", self.library_splitter.sizes())
+        
+        if hasattr(self, 'summary_splitter'):
+            self.user_settings.set_splitter_sizes("summary_splitter", self.summary_splitter.sizes())
+        
+        if hasattr(self, 'search_splitter'):
+            self.user_settings.set_splitter_sizes("search_splitter", self.search_splitter.sizes())
+        
+        if hasattr(self, 'search_results_splitter'):
+            self.user_settings.set_splitter_sizes("search_results_splitter", self.search_results_splitter.sizes())
+        
+        if hasattr(self, 'references_splitter'):
+            self.user_settings.set_splitter_sizes("references_splitter", self.references_splitter.sizes())
             
-            # Проверяем, существует ли уже файл
-            if os.path.exists(file_name):
-                reply = QMessageBox.question(
-                    self,
-                    "Файл существует",
-                    "Статья уже скачана. Хотите открыть её?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.Yes
-                )
-                
-                if reply == QMessageBox.StandardButton.Yes:
-                    os.startfile(file_name)
-                return
-
-            self.statusBar().showMessage("Скачивание статьи...")
-            
-            # Скачиваем PDF
-            self.arxiv_service.download_pdf(article, file_name)
-            self.statusBar().showMessage(f"Статья сохранена в {file_name}")
-
-            # Добавляем статью в библиотеку
-            self.storage_service.add_article(article, file_name)
-            
-            # Обновляем список библиотеки
-            self.load_library_articles()
-
-            # Спрашиваем пользователя, хочет ли он открыть статью
-            reply = QMessageBox.question(
-                self,
-                "Статья скачана",
-                "Статья успешно скачана. Открыть её?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes
-            )
-
-            if reply == QMessageBox.StandardButton.Yes:
-                os.startfile(file_name)
-
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при скачивании статьи: {str(e)}") 
+        if hasattr(self, 'references_list_splitter'):
+            self.user_settings.set_splitter_sizes("references_list_splitter", self.references_list_splitter.sizes())
+        
+        # Сохраняем настройки
+        self.user_settings.save_settings()
+        
+        # Продолжаем обработку события закрытия
+        super().closeEvent(event) 

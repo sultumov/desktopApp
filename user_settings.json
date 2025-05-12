@@ -1,0 +1,9 @@
+{
+  "interface": {
+    "splitter_sizes": {},
+    "window_size": [1200, 800],
+    "window_position": [100, 100],
+    "current_tab": 0,
+    "theme": "light"
+  }
+}

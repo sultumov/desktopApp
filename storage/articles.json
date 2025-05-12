@@ -1,0 +1,88 @@
+[
+    {
+        "id": "http://arxiv.org/abs/2206.12844v1",
+        "title": "Schroder T-quasigroups",
+        "authors": [
+            "V. Shcherbacov"
+        ],
+        "abstract": "We prolong research of Schroder quasigroups and Schroder T-quasigroups.",
+        "year": 2022,
+        "doi": null,
+        "url": "http://arxiv.org/pdf/2206.12844v1",
+        "journal": null,
+        "volume": null,
+        "issue": null,
+        "pages": null,
+        "keywords": [],
+        "full_text": null,
+        "file_path": "storage\\articles\\http://arxiv.org/abs/2206.12844v1.pdf",
+        "categories": [
+            "math.GR",
+            "20N05"
+        ],
+        "added_date": "2025-05-12 23:35:42.944194",
+        "source": "Unknown",
+        "citation_count": 0,
+        "reference_count": 0,
+        "summary": "We prolong research of Schroder quasigroups and Schroder T-quasigroups.",
+        "references": [],
+        "published": "2022-06-26 11:12:12+00:00"
+    },
+    {
+        "id": "http://arxiv.org/abs/hep-th/9510085v2",
+        "title": "Calculation of the Aharonov-Bohm wave function",
+        "authors": [
+            "M. Alvarez"
+        ],
+        "abstract": "A calculation of the Aharonov-Bohm wave function is presented. The result is\na series of confluent hypergeometric functions which is finite at the forward\ndirection.",
+        "year": 1995,
+        "doi": "10.1103/PhysRevA.54.1128",
+        "url": "http://arxiv.org/pdf/hep-th/9510085v2",
+        "journal": null,
+        "volume": null,
+        "issue": null,
+        "pages": null,
+        "keywords": [],
+        "full_text": null,
+        "file_path": "storage\\articles\\http://arxiv.org/abs/hep-th/9510085v2.pdf",
+        "categories": [
+            "hep-th"
+        ],
+        "added_date": "2025-05-12 23:35:42.944194",
+        "source": "Unknown",
+        "citation_count": 0,
+        "reference_count": 0,
+        "summary": "A calculation of the Aharonov-Bohm wave function is presented. The result is\na series of confluent hypergeometric functions which is finite at the forward\ndirection.",
+        "references": [],
+        "published": "1995-10-12 17:03:53+00:00"
+    },
+    {
+        "id": "http://arxiv.org/abs/1708.09729v4",
+        "title": "On the cohomology of Calogero-Moser spaces",
+        "authors": [
+            "Cédric Bonnafé",
+            "Peng Shan"
+        ],
+        "abstract": "We compute the equivariant cohomology of smooth Calogero-Moser spaces and\nsome associated symplectic resolutions of symplectic quotient singularities.",
+        "year": 2017,
+        "doi": null,
+        "url": "http://arxiv.org/pdf/1708.09729v4",
+        "journal": null,
+        "volume": null,
+        "issue": null,
+        "pages": null,
+        "keywords": [],
+        "full_text": null,
+        "file_path": "storage\\articles\\http://arxiv.org/abs/1708.09729v4.pdf",
+        "categories": [
+            "math.RT"
+        ],
+        "added_date": "2025-05-12 23:35:42.944194",
+        "source": "Unknown",
+        "citation_count": 0,
+        "reference_count": 0,
+        "summary": "We compute the equivariant cohomology of smooth Calogero-Moser spaces and\nsome associated symplectic resolutions of symplectic quotient singularities.",
+        "references": [],
+        "published": "2017-08-31 14:15:22+00:00"
+    }
+]

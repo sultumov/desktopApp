@@ -1,0 +1,40 @@
+{
+    "interface": {
+        "splitter_sizes": {
+            "search_splitter": [
+                129,
+                357
+            ],
+            "search_results_splitter": [
+                280,
+                761
+            ],
+            "summary_splitter": [
+                166,
+                308
+            ],
+            "references_splitter": [
+                154,
+                320
+            ],
+            "references_list_splitter": [
+                229,
+                405
+            ],
+            "library_splitter": [
+                317,
+                317
+            ]
+        },
+        "window_size": [
+            1200,
+            800
+        ],
+        "window_position": [
+            100,
+            100
+        ],
+        "current_tab": 3,
+        "theme": "light"
+    }
+}

@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and databases
+logs/
+*.log
+*.sqlite
+*.db
+
+# Test files
+test_*.py
+minimal_test.py
+
+# Build and dist
+build/
+dist/
+library/ 

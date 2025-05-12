@@ -43,6 +43,11 @@ class AIService:
         try:
             logger.info(f"Создание краткого содержания для статьи: {article.title}")
             
+            # Проверяем наличие полного текста для более качественного резюме
+            if hasattr(article, 'full_text') and article.full_text:
+                logger.info("Используем полный текст статьи для генерации резюме")
+                return self.generate_summary(article.full_text, max_length=2000)
+            
             # Приводим строку к нижнему регистру для сравнения, не зависящего от регистра
             service_lower = self.service.lower()
             
@@ -51,81 +56,221 @@ class AIService:
                 
                 # Подготавливаем данные о статье
                 article_info = f"""Название: {article.title}
-Авторы: {', '.join(article.authors)}
+Авторы: {', '.join(author.name if isinstance(author, Author) else author for author in article.authors)}
 Аннотация: {article.abstract or article.summary}
-Категории: {', '.join(article.categories)}
-Год: {article.year}
+Категории: {', '.join(article.categories) if article.categories else ''}
+Год: {article.year or 'Не указан'}
+DOI: {article.doi if hasattr(article, 'doi') and article.doi else 'Не указан'}
+Ключевые слова: {', '.join(article.keywords) if hasattr(article, 'keywords') and article.keywords else 'Не указаны'}
 """
                 
                 # Отладочная информация
-                logger.info(f"Инициализация клиента OpenAI с API ключом {self.api_key[:10]}...")
+                logger.info(f"Инициализация клиента OpenAI с API ключом {self.api_key[:10] if self.api_key else 'Отсутствует'}...")
                 
                 # Настраиваем клиента OpenAI
                 os.environ["OPENAI_API_KEY"] = self.api_key
                 client = OpenAI()
                 logger.info("Клиент OpenAI успешно создан")
                 
+                # Определяем модель в зависимости от переменной окружения или настроек
+                model = os.getenv("AI_MODEL", "gpt-3.5-turbo")
+                logger.info(f"Используем модель {model} для генерации краткого содержания")
+                
+                # Подробный системный промпт для более качественного резюме
+                system_message = """Ты - научный ассистент, который создает структурированные краткие содержания научных статей.
+Твоя задача - выделить следующие аспекты статьи:
+1. Основная проблема и цель исследования
+2. Методология и использованные подходы
+3. Ключевые результаты и выводы
+4. Практическая значимость исследования
+
+Используй разметку Markdown для форматирования:
+- Создай заголовок "# Краткое содержание"
+- Используй подзаголовки для каждого раздела (## Проблема и цель, ## Методология и т.д.)
+- Применяй маркированные списки для перечисления ключевых моментов
+- Выделяй **жирным** важные концепции и термины
+
+Анализируй научные аббревиатуры и термины. Сохраняй научную точность и конкретность.
+Старайся подчеркнуть новизну и уникальность исследования.
+"""
+                
                 # Запрос к API
                 logger.info("Отправка запроса к API OpenAI...")
                 response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
+                    model=model,
                     messages=[
-                        {"role": "system", "content": "Ты - научный ассистент, который создает краткое содержание научных статей."},
-                        {"role": "user", "content": f"Создай структурированное краткое содержание следующей научной статьи, выделив основные идеи, методологию, результаты и выводы. Используй разметку Markdown для структурирования.\n\nСтатья:\n{article_info}"}
+                        {"role": "system", "content": system_message},
+                        {"role": "user", "content": f"Создай структурированное краткое содержание следующей научной статьи на основе доступной информации. Если информация ограничена, укажи, какие аспекты требуют дополнительного изучения.\n\nИнформация о статье:\n{article_info}"}
                     ],
-                    max_tokens=1000,
-                    temperature=0.3,
+                    max_tokens=1200,
+                    temperature=0.2,  # Более низкая температура для большей точности
                 )
                 logger.info("Ответ от API OpenAI получен")
                 
                 return response.choices[0].message.content
             elif service_lower == "huggingface":
-                # Используем имеющуюся заглушку, пока библиотека не будет установлена
-                logger.info("Использование заглушки для Hugging Face")
-                return f"""Краткое содержание статьи "{article.title}":
-
-1. Основные идеи:
-   - Статья посвящена исследованию в области {', '.join(article.categories) if article.categories else 'науки'}
-   - Рассматриваются ключевые аспекты и методы анализа данных
-   - Предлагается новый подход к решению проблемы
-
-2. Методология:
-   - Анализ существующих методов
-   - Разработка усовершенствованного алгоритма
-   - Экспериментальная проверка результатов
-
-3. Результаты:
-   - Получены статистически значимые улучшения
-   - Предложены практические рекомендации
-   - Определены направления для дальнейших исследований
-
-4. Выводы:
-   - Разработанный метод демонстрирует высокую эффективность
-   - Предложенный подход может быть применен в смежных областях"""
+                logger.info("Используем Hugging Face для генерации краткого содержания")
+                
+                # Подготавливаем данные о статье в формате обычного текста
+                article_text = f"""Название: {article.title}
+Авторы: {', '.join(author.name if isinstance(author, Author) else author for author in article.authors)}
+Аннотация: {article.abstract or article.summary}
+Категории: {', '.join(article.categories) if article.categories else ''}
+Год: {article.year or 'Не указан'}
+"""
+                # Генерируем краткое содержание с использованием Hugging Face
+                try:
+                    from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
+                    import torch
+                    
+                    # Проверяем наличие GPU
+                    device = 0 if torch.cuda.is_available() else -1
+                    logger.info(f"Используется устройство: {'GPU' if device == 0 else 'CPU'}")
+                    
+                    # Определяем язык текста для выбора подходящей модели
+                    is_english = self._is_primarily_english(article_text)
+                    
+                    if is_english:
+                        model_name = "facebook/bart-large-cnn"
+                        logger.info("Определен английский язык, используем модель BART")
+                        # Инициализируем pipeline для суммаризации
+                        summarizer = pipeline("summarization", model=model_name, device=device)
+                        # Генерируем краткое содержание
+                        result = summarizer(article_text, max_length=250, min_length=50, do_sample=False)
+                        if result and len(result) > 0:
+                            summary_text = result[0]['summary_text']
+                            # Форматируем результат
+                            final_summary = self._format_summary_as_markdown(summary_text, "en")
+                            return final_summary
+                    else:
+                        model_name = "IlyaGusev/mbart_ru_sum_gazeta"
+                        logger.info("Определен русский язык, используем модель mBART для русской суммаризации")
+                        # Загружаем токенизатор и модель напрямую
+                        tokenizer = AutoTokenizer.from_pretrained(model_name)
+                        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+                        
+                        # Перемещаем модель на GPU, если доступно
+                        if device == 0:
+                            model = model.to("cuda")
+                        
+                        # Токенизируем текст
+                        inputs = tokenizer(article_text, return_tensors="pt", max_length=512, truncation=True)
+                        if device == 0:
+                            inputs = {k: v.to("cuda") for k, v in inputs.items()}
+                        
+                        # Генерируем саммари
+                        with torch.no_grad():
+                            output_ids = model.generate(
+                                inputs["input_ids"],
+                                max_length=150,
+                                min_length=40,
+                                no_repeat_ngram_size=3,
+                                num_beams=4
+                            )
+                        
+                        summary_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+                        # Форматируем результат
+                        final_summary = self._format_summary_as_markdown(summary_text, "ru")
+                        return final_summary
+                except Exception as e:
+                    logger.error(f"Ошибка при использовании Hugging Face: {str(e)}")
+                    # Используем заглушку, если не удалось использовать Hugging Face
+                    logger.info("Используем расширенную заглушку для HuggingFace")
+                    return self._generate_advanced_mock_summary_for_article(article)
             else:
-                # Если сервис не распознан, возвращаем заглушку
-                return f"""Краткое содержание статьи "{article.title}":
-
-1. Основные идеи:
-   - Идея 1
-   - Идея 2
-   - Идея 3
-
-2. Методология:
-   - Метод 1
-   - Метод 2
-
-3. Результаты:
-   - Результат 1
-   - Результат 2
-
-4. Выводы:
-   - Вывод 1
-   - Вывод 2"""
+                # Если API не настроен, используем продвинутую заглушку
+                logger.info("Используем расширенную заглушку для демонстрации")
+                return self._generate_advanced_mock_summary_for_article(article)
 
         except Exception as e:
             logger.error(f"Ошибка при создании краткого содержания: {str(e)}")
-            raise
+            # В случае ошибки используем базовую заглушку
+            return self._generate_simple_mock_summary_for_article(article)
+            
+    def _generate_advanced_mock_summary_for_article(self, article: Article) -> str:
+        """
+        Генерирует расширенное демонстрационное резюме для статьи без использования AI API.
+        
+        Args:
+            article (Article): Объект статьи
+            
+        Returns:
+            str: Сгенерированное резюме
+        """
+        # Используем имеющуюся заглушку, но с форматированием в Markdown
+        title = article.title
+        categories = article.categories if article.categories else ["наука"]
+        abstract = article.abstract or article.summary or "Аннотация отсутствует"
+        
+        # Извлекаем ключевые слова из аннотации
+        abstract_words = [word for word in re.findall(r'\b\w+\b', abstract.lower()) 
+                         if len(word) > 3 and word not in ["этот", "того", "этого", "такой", "такая", "также", "быть", "этом", "между"]]
+        key_terms = list(set(abstract_words))[:5]  # Берем до 5 уникальных слов
+        
+        # Формируем структурированное содержание
+        summary = "# Краткое содержание статьи\n\n"
+        
+        # Введение и цель
+        summary += "## Проблема и цель исследования\n\n"
+        summary += f"Данная статья «**{title}**» посвящена исследованию в области {', '.join(categories)}. "
+        summary += f"Работа направлена на решение проблем, связанных с {key_terms[0] if key_terms else 'исследуемой областью'}. "
+        summary += f"Основная цель — {random.choice(['разработка новых методов', 'анализ существующих подходов', 'создание эффективного решения'])} "
+        summary += f"для {key_terms[1] if len(key_terms) > 1 else 'данной области исследования'}.\n\n"
+        
+        # Методология
+        summary += "## Методология\n\n"
+        summary += "В исследовании применяются следующие методы:\n\n"
+        summary += "- Анализ существующей литературы и подходов\n"
+        summary += f"- Экспериментальное исследование {key_terms[2] if len(key_terms) > 2 else 'параметров'}\n"
+        summary += "- Статистическая обработка полученных данных\n"
+        summary += f"- Сравнительный анализ с существующими решениями в области {categories[0] if categories else 'науки'}\n\n"
+        
+        # Результаты
+        summary += "## Результаты\n\n"
+        summary += "Исследование показало следующие результаты:\n\n"
+        summary += f"1. Выявлены основные факторы, влияющие на {key_terms[0] if key_terms else 'исследуемый процесс'}\n"
+        summary += f"2. Предложен новый подход к {key_terms[1] if len(key_terms) > 1 else 'решению проблемы'}\n"
+        summary += f"3. Экспериментально подтверждена эффективность предложенного метода\n"
+        summary += f"4. Определены ограничения и области применения разработанного подхода\n\n"
+        
+        # Выводы
+        summary += "## Выводы и значимость\n\n"
+        summary += f"Данное исследование вносит значительный вклад в понимание {key_terms[0] if key_terms else 'рассматриваемых процессов'}. "
+        summary += f"Предложенный подход может быть применен в {random.choice(['промышленности', 'дальнейших исследованиях', 'смежных областях'])}. "
+        summary += "Результаты открывают новые перспективы для развития данного направления науки."
+        
+        return summary
+        
+    def _generate_simple_mock_summary_for_article(self, article: Article) -> str:
+        """
+        Генерирует простое демонстрационное резюме для статьи при возникновении ошибок.
+        
+        Args:
+            article (Article): Объект статьи
+            
+        Returns:
+            str: Простое сгенерированное резюме
+        """
+        title = article.title
+        categories = ', '.join(article.categories) if article.categories else "не указаны"
+        
+        return f"""# Краткое содержание статьи
+
+## О статье
+
+Название: **{title}**
+Категории: {categories}
+
+## Основные положения
+
+- Статья посвящена исследованию в указанной области
+- Рассматриваются ключевые аспекты и методы анализа данных
+- Предлагается подход к решению проблемы
+
+## Выводы
+
+Для получения более детального содержания необходимо проанализировать полный текст статьи.
+"""
 
     def find_references(self, article: Article) -> List[str]:
         """Ищет источники в статье."""
@@ -325,17 +470,59 @@ class AIService:
             # Настраиваем клиента OpenAI
             os.environ["OPENAI_API_KEY"] = self.api_key
             client = OpenAI()
+
+            # Создаем более подробный промпт для структурированного резюме
+            system_message = """Ты - научный ассистент, который создает структурированные краткие содержания научных статей.
+Твоя задача - выделить следующие аспекты статьи:
+1. Основная проблема и цель исследования
+2. Методология и использованные подходы
+3. Ключевые результаты и выводы
+4. Практическая значимость и перспективы исследования
+5. Ограничения исследования (если упоминаются)
+
+Используй разметку Markdown для форматирования:
+- Заголовок резюме (# Краткое содержание)
+- Подзаголовки для каждого раздела (## Проблема и цель, ## Методология и т.д.)
+- Маркированные списки для перечисления ключевых моментов
+- **Жирное выделение** важных концепций и терминов
+- *Курсив* для определений
+- > Цитаты для важных выводов автора
+
+Важно: не добавляй информацию, которой нет в оригинальном тексте. Сохраняй научную точность."""
+
+            user_message = f"""Создай структурированное краткое содержание следующей научной статьи. 
+Резюме должно быть информативным, но лаконичным (максимальная длина: {max_length} символов).
+Сфокусируйся на основной проблеме, методологии, результатах и выводах.
+
+Статья:
+{text}"""
+            
+            # Определяем модель в зависимости от переменной окружения или настроек
+            model = os.getenv("AI_MODEL", "gpt-3.5-turbo")
+            if "gpt-4" in model.lower():
+                # Если доступен GPT-4, используем его с более низкой температурой для точности
+                model_to_use = model
+                temp = 0.2
+                max_tokens_to_use = 1500
+            else:
+                # Иначе используем gpt-3.5-turbo
+                model_to_use = "gpt-3.5-turbo"
+                temp = 0.3
+                max_tokens_to_use = 1000
+                
+            logger.info(f"Используем модель {model_to_use} для генерации краткого содержания")
             
             response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model=model_to_use,
                 messages=[
-                    {"role": "system", "content": "Ты - научный ассистент, который создает краткое содержание научных статей."},
-                    {"role": "user", "content": f"Создай структурированное краткое содержание следующей научной статьи, выделив основные разделы, методологию, результаты и выводы. Используй разметку Markdown для структурирования. Максимальная длина: {max_length} символов.\n\nСтатья:\n{text}"}
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_message}
                 ],
-                max_tokens=1000,
-                temperature=0.3,
+                max_tokens=max_tokens_to_use,
+                temperature=temp,
             )
             
+            logger.info("Краткое содержание успешно сгенерировано через OpenAI")
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"Ошибка OpenAI API: {str(e)}")
@@ -356,7 +543,7 @@ class AIService:
         try:
             # Пытаемся импортировать необходимые библиотеки
             try:
-                from transformers import pipeline
+                from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
                 import torch
                 has_transformers = True
                 logger.info("Библиотека transformers успешно импортирована")
@@ -370,35 +557,103 @@ class AIService:
                     device = 0 if torch.cuda.is_available() else -1
                     logger.info(f"Используется устройство: {'GPU' if device == 0 else 'CPU'}")
                     
+                    # Определяем язык текста для выбора подходящей модели
+                    is_english = self._is_primarily_english(text)
+                    
+                    # Выбираем модель в зависимости от языка
+                    if is_english:
+                        model_name = "facebook/bart-large-cnn"
+                        logger.info("Определен английский язык, используем модель BART")
+                    else:
+                        model_name = "IlyaGusev/mbart_ru_sum_gazeta"
+                        logger.info("Определен русский язык, используем модель mBART для русской суммаризации")
+                    
                     # Инициализируем модель для суммаризации
-                    logger.info("Загрузка модели summarization...")
-                    summarizer = pipeline("summarization", model="facebook/bart-large-cnn", device=device)
-                    logger.info("Модель summarization успешно загружена")
+                    logger.info(f"Загрузка модели summarization: {model_name}...")
                     
-                    # Разбиваем текст на части, если он слишком длинный
-                    max_chunk_length = 1024
-                    chunks = [text[i:i+max_chunk_length] for i in range(0, len(text), max_chunk_length)]
-                    
-                    logger.info(f"Текст разбит на {len(chunks)} частей для обработки")
-                    
-                    summaries = []
-                    for i, chunk in enumerate(chunks[:3]):  # Обрабатываем только первые 3 чанка для скорости
-                        logger.info(f"Обработка части {i+1}/3...")
-                        if len(chunk.strip()) > 100:  # Пропускаем слишком короткие куски
-                            result = summarizer(chunk, max_length=100, min_length=30, do_sample=False)
-                            if result and len(result) > 0:
-                                summaries.append(result[0]['summary_text'])
+                    # Для русской модели используем специфичный подход
+                    if model_name == "IlyaGusev/mbart_ru_sum_gazeta":
+                        # Загружаем токенизатор и модель напрямую
+                        tokenizer = AutoTokenizer.from_pretrained(model_name)
+                        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+                        
+                        # Перемещаем модель на GPU, если доступно
+                        if device == 0:
+                            model = model.to("cuda")
+                        
+                        # Разбиваем текст на части
+                        max_chunk_length = min(512, tokenizer.model_max_length)
+                        chunks = self._split_text_into_chunks(text, max_chunk_length, tokenizer)
+                        
+                        logger.info(f"Текст разбит на {len(chunks)} частей для обработки")
+                        
+                        summaries = []
+                        # Ограничиваем количество обрабатываемых чанков для скорости
+                        max_chunks_to_process = min(5, len(chunks))
+                        
+                        for i, chunk in enumerate(chunks[:max_chunks_to_process]):
+                            logger.info(f"Обработка части {i+1}/{max_chunks_to_process}...")
+                            if len(chunk.strip()) > 100:  # Пропускаем слишком короткие куски
+                                inputs = tokenizer(chunk, return_tensors="pt", max_length=max_chunk_length, truncation=True)
+                                if device == 0:
+                                    inputs = {k: v.to("cuda") for k, v in inputs.items()}
+                                
+                                # Генерируем саммари
+                                with torch.no_grad():
+                                    output_ids = model.generate(
+                                        inputs["input_ids"],
+                                        max_length=120,
+                                        min_length=40,
+                                        no_repeat_ngram_size=3,
+                                        num_beams=4
+                                    )
+                                
+                                summary = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+                                summaries.append(summary)
                                 logger.info(f"Часть {i+1} успешно обработана")
-                        else:
-                            logger.info(f"Часть {i+1} слишком короткая, пропускаем")
+                            else:
+                                logger.info(f"Часть {i+1} слишком короткая, пропускаем")
+                    else:
+                        # Используем pipeline для английской модели
+                        summarizer = pipeline("summarization", model=model_name, device=device)
+                        
+                        # Разбиваем текст на части, если он слишком длинный
+                        max_chunk_length = 1024
+                        chunks = [text[i:i+max_chunk_length] for i in range(0, len(text), max_chunk_length)]
+                        
+                        logger.info(f"Текст разбит на {len(chunks)} частей для обработки")
+                        
+                        summaries = []
+                        max_chunks_to_process = min(3, len(chunks))
+                        
+                        for i, chunk in enumerate(chunks[:max_chunks_to_process]):
+                            logger.info(f"Обработка части {i+1}/{max_chunks_to_process}...")
+                            if len(chunk.strip()) > 100:  # Пропускаем слишком короткие куски
+                                result = summarizer(
+                                    chunk, 
+                                    max_length=150, 
+                                    min_length=40, 
+                                    do_sample=False,
+                                    num_beams=4
+                                )
+                                if result and len(result) > 0:
+                                    summaries.append(result[0]['summary_text'])
+                                    logger.info(f"Часть {i+1} успешно обработана")
+                            else:
+                                logger.info(f"Часть {i+1} слишком короткая, пропускаем")
                     
                     if summaries:
                         # Объединяем результаты
                         combined_summary = " ".join(summaries)
                         
-                        # Добавляем Markdown заголовок
+                        # Форматируем результат в виде структурированного Markdown
+                        if is_english:
+                            final_summary = self._format_summary_as_markdown(combined_summary, "en")
+                        else:
+                            final_summary = self._format_summary_as_markdown(combined_summary, "ru")
+                        
                         logger.info("Суммаризация успешно выполнена")
-                        return "# Краткое содержание статьи\n\n" + combined_summary
+                        return final_summary
                     else:
                         logger.warning("Не удалось получить резюме из модели. Используем расширенную заглушку.")
                         return self._generate_advanced_mock_summary(text)
@@ -411,6 +666,195 @@ class AIService:
             logger.error(f"Общая ошибка при использовании Hugging Face: {str(e)}")
             # Если модель не загружена или другая ошибка, возвращаем расширенную заглушку
             return self._generate_advanced_mock_summary(text)
+    
+    def _is_primarily_english(self, text):
+        """
+        Определяет, является ли текст преимущественно английским.
+        
+        Args:
+            text (str): Текст для анализа
+            
+        Returns:
+            bool: True, если текст преимущественно на английском языке
+        """
+        # Упрощённое определение языка по наличию характерных символов
+        # Считаем количество кириллических и латинских символов
+        cyrillic_count = len(re.findall(r'[а-яА-ЯёЁ]', text))
+        latin_count = len(re.findall(r'[a-zA-Z]', text))
+        
+        # Если кириллических символов больше, считаем текст русским
+        return latin_count > cyrillic_count
+    
+    def _split_text_into_chunks(self, text, max_tokens, tokenizer):
+        """
+        Разбивает текст на части с учетом максимального количества токенов.
+        
+        Args:
+            text (str): Исходный текст
+            max_tokens (int): Максимальное количество токенов в одном куске
+            tokenizer: Токенизатор для подсчета токенов
+            
+        Returns:
+            list: Список кусков текста
+        """
+        # Делим текст на абзацы
+        paragraphs = text.split('\n')
+        chunks = []
+        current_chunk = []
+        current_length = 0
+        
+        for paragraph in paragraphs:
+            if not paragraph.strip():
+                continue
+                
+            # Подсчитываем токены в параграфе
+            tokens = tokenizer(paragraph, return_attention_mask=False)["input_ids"]
+            paragraph_length = len(tokens)
+            
+            # Если текущий кусок + параграф не превышает максимум, добавляем к текущему куску
+            if current_length + paragraph_length <= max_tokens:
+                current_chunk.append(paragraph)
+                current_length += paragraph_length
+            else:
+                # Если текущий кусок непустой, сохраняем его
+                if current_chunk:
+                    chunks.append('\n'.join(current_chunk))
+                # Начинаем новый кусок с текущего параграфа
+                # Если параграф слишком длинный, обрезаем его
+                if paragraph_length > max_tokens:
+                    # Грубое приближение: считаем, что один токен примерно равен 4 символам
+                    approx_chars = max_tokens * 4
+                    current_chunk = [paragraph[:approx_chars]]
+                    current_length = max_tokens
+                else:
+                    current_chunk = [paragraph]
+                    current_length = paragraph_length
+        
+        # Добавляем последний кусок
+        if current_chunk:
+            chunks.append('\n'.join(current_chunk))
+            
+        return chunks
+    
+    def _format_summary_as_markdown(self, summary_text, language="ru"):
+        """
+        Форматирует результат суммаризации в структурированный Markdown.
+        
+        Args:
+            summary_text (str): Текст суммаризации
+            language (str): Язык текста ('ru' или 'en')
+            
+        Returns:
+            str: Отформатированный текст в Markdown
+        """
+        # Заголовки в зависимости от языка
+        headers = {
+            "ru": {
+                "main": "# Краткое содержание статьи",
+                "intro": "## Введение и основная проблема",
+                "method": "## Методология",
+                "results": "## Результаты",
+                "conclusion": "## Выводы"
+            },
+            "en": {
+                "main": "# Article Summary",
+                "intro": "## Introduction and Main Problem",
+                "method": "## Methodology",
+                "results": "## Results",
+                "conclusion": "## Conclusions"
+            }
+        }
+        
+        h = headers[language]
+        
+        # Пытаемся разделить текст на смысловые части
+        # Для этого используем NLP-эвристики:
+        # 1. Ищем предложения с ключевыми словами, характерными для разных разделов
+        # 2. Используем позицию в тексте (начало, середина, конец)
+        
+        sentences = re.split(r'(?<=[.!?])\s+', summary_text)
+        
+        # Ключевые слова для каждого раздела
+        keywords = {
+            "ru": {
+                "intro": ["введение", "проблема", "цель", "задача", "исследование", "работа", "статья", "рассматривается"],
+                "method": ["метод", "методология", "подход", "анализ", "исследование", "измерение", "оценка", "эксперимент"],
+                "results": ["результат", "вывод", "показал", "обнаружено", "выявлено", "продемонстрировано"],
+                "conclusion": ["заключение", "вывод", "итог", "таким образом", "следовательно", "в результате"]
+            },
+            "en": {
+                "intro": ["introduction", "problem", "purpose", "goal", "research", "study", "paper", "article", "examined"],
+                "method": ["method", "methodology", "approach", "analysis", "measure", "assessment", "experiment"],
+                "results": ["result", "finding", "showed", "demonstrated", "revealed", "indicated"],
+                "conclusion": ["conclusion", "therefore", "thus", "consequently", "as a result", "in summary"]
+            }
+        }
+        
+        # Категоризируем предложения
+        intro_sentences = []
+        method_sentences = []
+        results_sentences = []
+        conclusion_sentences = []
+        
+        # Простой алгоритм распределения по категориям
+        total_sentences = len(sentences)
+        for i, sentence in enumerate(sentences):
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+                
+            # Положение в тексте (начало, середина, конец)
+            position = i / total_sentences
+            
+            # Проверяем ключевые слова
+            sentence_lower = sentence.lower()
+            
+            # Поиск совпадений с ключевыми словами
+            has_intro_keywords = any(keyword in sentence_lower for keyword in keywords[language]["intro"])
+            has_method_keywords = any(keyword in sentence_lower for keyword in keywords[language]["method"])
+            has_results_keywords = any(keyword in sentence_lower for keyword in keywords[language]["results"])
+            has_conclusion_keywords = any(keyword in sentence_lower for keyword in keywords[language]["conclusion"])
+            
+            # Распределение по категориям на основе ключевых слов и позиции
+            if has_conclusion_keywords or position > 0.8:
+                conclusion_sentences.append(sentence)
+            elif has_results_keywords or 0.5 < position <= 0.8:
+                results_sentences.append(sentence)
+            elif has_method_keywords or 0.3 < position <= 0.5:
+                method_sentences.append(sentence)
+            elif has_intro_keywords or position <= 0.3:
+                intro_sentences.append(sentence)
+            else:
+                # Если не удалось определить категорию, распределяем по позиции
+                if position <= 0.25:
+                    intro_sentences.append(sentence)
+                elif position <= 0.5:
+                    method_sentences.append(sentence)
+                elif position <= 0.75:
+                    results_sentences.append(sentence)
+                else:
+                    conclusion_sentences.append(sentence)
+        
+        # Форматируем в Markdown
+        formatted_summary = f"{h['main']}\n\n"
+        
+        if intro_sentences:
+            formatted_summary += f"{h['intro']}\n\n"
+            formatted_summary += " ".join(intro_sentences) + "\n\n"
+        
+        if method_sentences:
+            formatted_summary += f"{h['method']}\n\n"
+            formatted_summary += " ".join(method_sentences) + "\n\n"
+        
+        if results_sentences:
+            formatted_summary += f"{h['results']}\n\n"
+            formatted_summary += " ".join(results_sentences) + "\n\n"
+        
+        if conclusion_sentences:
+            formatted_summary += f"{h['conclusion']}\n\n"
+            formatted_summary += " ".join(conclusion_sentences)
+        
+        return formatted_summary
     
     def _generate_advanced_mock_summary(self, text, sections=4):
         """

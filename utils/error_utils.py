@@ -1,10 +1,12 @@
 """Утилиты для обработки ошибок и исключений."""
 
+import sys
 import logging
 import traceback
-import sys
 from functools import wraps
+from typing import Optional, Tuple, Type
 
+# Настройка логгера
 logger = logging.getLogger(__name__)
 
 def log_exception(exc, message=None):

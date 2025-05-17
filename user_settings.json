@@ -2,39 +2,39 @@
     "interface": {
         "splitter_sizes": {
             "search_splitter": [
-                129,
-                357
+                145,
+                387
             ],
             "search_results_splitter": [
-                280,
-                761
+                301,
+                756
             ],
             "summary_splitter": [
-                166,
-                308
+                175,
+                325
             ],
             "references_splitter": [
-                154,
-                320
+                162,
+                338
             ],
             "references_list_splitter": [
-                229,
-                405
+                370,
+                655
             ],
             "library_splitter": [
-                317,
-                317
+                162,
+                472
             ]
         },
         "window_size": [
-            1200,
+            1536,
             800
         ],
         "window_position": [
-            100,
-            100
+            62,
+            -7
         ],
-        "current_tab": 3,
+        "current_tab": 1,
         "theme": "light"
     }
 }

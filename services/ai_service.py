@@ -1,5 +1,69 @@
 """
-Сервис для работы с AI API.
+Сервис для работы с различными AI API (GigaChat, OpenAI, HuggingFace).
+
+Для работы сервиса необходимо:
+1. Настроить переменные окружения:
+   - AI_SERVICE: Выбор сервиса ("GigaChat", "OpenAI", "HuggingFace")
+   - OPENAI_API_KEY: API ключ OpenAI (если используется OpenAI)
+   - MODEL: Модель для использования (по умолчанию "GPT-3.5")
+   - LANGUAGE: Язык вывода (по умолчанию "Русский")
+
+Поддерживаемые AI сервисы:
+1. GigaChat (Сбер) - основной рекомендуемый сервис
+   - Требует API ключ GigaChat
+   - Оптимизирован для работы с русскими текстами
+   
+2. OpenAI (GPT-3.5/GPT-4)
+   - Требует API ключ OpenAI
+   - Хорошо работает с английскими текстами
+   
+3. HuggingFace (Локальные модели)
+   - Не требует API ключей
+   - Работает медленнее, но полностью локально
+   - Поддерживает оба языка
+
+Основные возможности:
+- Создание кратких содержаний статей (create_summary)
+- Поиск источников и ссылок (find_references)
+- Генерация резюме для текстов (generate_summary)
+
+Особенности работы:
+- Автоматическое определение языка текста
+- Fallback на локальные модели при недоступности API
+- Поддержка Markdown форматирования
+- Встроенные промпты для научных текстов
+- Кэширование результатов для оптимизации
+
+Пример использования:
+```python
+from services.ai_service import AIService
+from models.article import Article
+
+# Инициализация сервиса
+service = AIService()
+
+# Создание краткого содержания
+article = Article(title="Название", authors=["Автор"], abstract="Текст")
+summary = service.create_summary(article, style="Академический")
+
+# Поиск источников
+references = service.find_references(article)
+
+# Генерация резюме для произвольного текста
+text = "Длинный научный текст..."
+summary = service.generate_summary(text, max_length=1500)
+```
+
+Системные требования:
+- Python 3.7+
+- Установленные пакеты: openai, gigachat, transformers (опционально)
+- Доступ к соответствующим API (в зависимости от выбранного сервиса)
+- GPU для ускорения работы локальных моделей (опционально)
+
+Рекомендации по выбору сервиса:
+- GigaChat: для работы с русскоязычными научными текстами
+- OpenAI: для работы с англоязычными текстами или когда требуется высокая точность
+- HuggingFace: когда нет доступа к API или требуется локальная обработка
 """
 
 import os
@@ -11,6 +75,7 @@ import re
 from dotenv import load_dotenv
 
 from models.article import Article, Author
+from .gigachat_service import GigaChatService
 
 logger = logging.getLogger(__name__)
 
@@ -22,170 +87,41 @@ class AIService:
     
     def __init__(self):
         """Инициализирует сервис."""
-        self.service = os.getenv("AI_SERVICE", "OpenAI")
+        self.service = os.getenv("AI_SERVICE", "GigaChat")  # По умолчанию используем GigaChat
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.model = os.getenv("MODEL", "GPT-3.5")
         self.language = os.getenv("LANGUAGE", "Русский")
         
-        # Устанавливаем переменные окружения для прокси, если они нужны в будущем
-        # Библиотека OpenAI автоматически использует эти переменные
-        # os.environ["HTTPS_PROXY"] = "http://proxy.example.com:8080"
-        # os.environ["HTTP_PROXY"] = "http://proxy.example.com:8080"
+        # Инициализируем сервисы
+        self.gigachat_service = GigaChatService() if self.service.lower() == "gigachat" else None
         
         # Логируем информацию о настройках
         logger.info(f"AI Service: {self.service}")
-        logger.info(f"API Key: {self.api_key[:5]}... (length: {len(self.api_key) if self.api_key else 0})")
         logger.info(f"Model: {self.model}")
         logger.info(f"Language: {self.language}")
         
-    def create_summary(self, article: Article) -> str:
-        """Создает краткое содержание статьи."""
+    def create_summary(self, article: Article, style: str = "Краткий обзор", max_length: int = 500) -> str:
+        """Создает краткое содержание статьи с помощью GigaChat.
+        
+        Args:
+            article: Объект статьи
+            style: Стиль краткого содержания
+            max_length: Максимальная длина краткого содержания в словах
+            
+        Returns:
+            Краткое содержание статьи
+        """
         try:
-            logger.info(f"Создание краткого содержания для статьи: {article.title}")
-            
-            # Проверяем наличие полного текста для более качественного резюме
-            if hasattr(article, 'full_text') and article.full_text:
-                logger.info("Используем полный текст статьи для генерации резюме")
-                return self.generate_summary(article.full_text, max_length=2000)
-            
-            # Приводим строку к нижнему регистру для сравнения, не зависящего от регистра
-            service_lower = self.service.lower()
-            
-            if service_lower == "openai" and self.api_key:
-                from openai import OpenAI
-                
-                # Подготавливаем данные о статье
-                article_info = f"""Название: {article.title}
-Авторы: {', '.join(author.name if isinstance(author, Author) else author for author in article.authors)}
-Аннотация: {article.abstract or article.summary}
-Категории: {', '.join(article.categories) if article.categories else ''}
-Год: {article.year or 'Не указан'}
-DOI: {article.doi if hasattr(article, 'doi') and article.doi else 'Не указан'}
-Ключевые слова: {', '.join(article.keywords) if hasattr(article, 'keywords') and article.keywords else 'Не указаны'}
-"""
-                
-                # Отладочная информация
-                logger.info(f"Инициализация клиента OpenAI с API ключом {self.api_key[:10] if self.api_key else 'Отсутствует'}...")
-                
-                # Настраиваем клиента OpenAI
-                os.environ["OPENAI_API_KEY"] = self.api_key
-                client = OpenAI()
-                logger.info("Клиент OpenAI успешно создан")
-                
-                # Определяем модель в зависимости от переменной окружения или настроек
-                model = os.getenv("AI_MODEL", "gpt-3.5-turbo")
-                logger.info(f"Используем модель {model} для генерации краткого содержания")
-                
-                # Подробный системный промпт для более качественного резюме
-                system_message = """Ты - научный ассистент, который создает структурированные краткие содержания научных статей.
-Твоя задача - выделить следующие аспекты статьи:
-1. Основная проблема и цель исследования
-2. Методология и использованные подходы
-3. Ключевые результаты и выводы
-4. Практическая значимость исследования
-
-Используй разметку Markdown для форматирования:
-- Создай заголовок "# Краткое содержание"
-- Используй подзаголовки для каждого раздела (## Проблема и цель, ## Методология и т.д.)
-- Применяй маркированные списки для перечисления ключевых моментов
-- Выделяй **жирным** важные концепции и термины
-
-Анализируй научные аббревиатуры и термины. Сохраняй научную точность и конкретность.
-Старайся подчеркнуть новизну и уникальность исследования.
-"""
-                
-                # Запрос к API
-                logger.info("Отправка запроса к API OpenAI...")
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system_message},
-                        {"role": "user", "content": f"Создай структурированное краткое содержание следующей научной статьи на основе доступной информации. Если информация ограничена, укажи, какие аспекты требуют дополнительного изучения.\n\nИнформация о статье:\n{article_info}"}
-                    ],
-                    max_tokens=1200,
-                    temperature=0.2,  # Более низкая температура для большей точности
-                )
-                logger.info("Ответ от API OpenAI получен")
-                
-                return response.choices[0].message.content
-            elif service_lower == "huggingface":
-                logger.info("Используем Hugging Face для генерации краткого содержания")
-                
-                # Подготавливаем данные о статье в формате обычного текста
-                article_text = f"""Название: {article.title}
-Авторы: {', '.join(author.name if isinstance(author, Author) else author for author in article.authors)}
-Аннотация: {article.abstract or article.summary}
-Категории: {', '.join(article.categories) if article.categories else ''}
-Год: {article.year or 'Не указан'}
-"""
-                # Генерируем краткое содержание с использованием Hugging Face
-                try:
-                    from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
-                    import torch
-                    
-                    # Проверяем наличие GPU
-                    device = 0 if torch.cuda.is_available() else -1
-                    logger.info(f"Используется устройство: {'GPU' if device == 0 else 'CPU'}")
-                    
-                    # Определяем язык текста для выбора подходящей модели
-                    is_english = self._is_primarily_english(article_text)
-                    
-                    if is_english:
-                        model_name = "facebook/bart-large-cnn"
-                        logger.info("Определен английский язык, используем модель BART")
-                        # Инициализируем pipeline для суммаризации
-                        summarizer = pipeline("summarization", model=model_name, device=device)
-                        # Генерируем краткое содержание
-                        result = summarizer(article_text, max_length=250, min_length=50, do_sample=False)
-                        if result and len(result) > 0:
-                            summary_text = result[0]['summary_text']
-                            # Форматируем результат
-                            final_summary = self._format_summary_as_markdown(summary_text, "en")
-                            return final_summary
-                    else:
-                        model_name = "IlyaGusev/mbart_ru_sum_gazeta"
-                        logger.info("Определен русский язык, используем модель mBART для русской суммаризации")
-                        # Загружаем токенизатор и модель напрямую
-                        tokenizer = AutoTokenizer.from_pretrained(model_name)
-                        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-                        
-                        # Перемещаем модель на GPU, если доступно
-                        if device == 0:
-                            model = model.to("cuda")
-                        
-                        # Токенизируем текст
-                        inputs = tokenizer(article_text, return_tensors="pt", max_length=512, truncation=True)
-                        if device == 0:
-                            inputs = {k: v.to("cuda") for k, v in inputs.items()}
-                        
-                        # Генерируем саммари
-                        with torch.no_grad():
-                            output_ids = model.generate(
-                                inputs["input_ids"],
-                                max_length=150,
-                                min_length=40,
-                                no_repeat_ngram_size=3,
-                                num_beams=4
-                            )
-                        
-                        summary_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-                        # Форматируем результат
-                        final_summary = self._format_summary_as_markdown(summary_text, "ru")
-                        return final_summary
-                except Exception as e:
-                    logger.error(f"Ошибка при использовании Hugging Face: {str(e)}")
-                    # Используем заглушку, если не удалось использовать Hugging Face
-                    logger.info("Используем расширенную заглушку для HuggingFace")
-                    return self._generate_advanced_mock_summary_for_article(article)
+            # Используем только GigaChat для создания кратких содержаний
+            if self.gigachat_service:
+                logger.info("Используем GigaChat для создания краткого содержания")
+                return self.gigachat_service.create_summary(article, style, max_length)
             else:
-                # Если API не настроен, используем продвинутую заглушку
-                logger.info("Используем расширенную заглушку для демонстрации")
-                return self._generate_advanced_mock_summary_for_article(article)
-
+                logger.warning("GigaChat не настроен, используем заглушку")
+                return self._generate_mock_summary(article.abstract or article.summary)
         except Exception as e:
             logger.error(f"Ошибка при создании краткого содержания: {str(e)}")
-            # В случае ошибки используем базовую заглушку
-            return self._generate_simple_mock_summary_for_article(article)
+            return self._generate_mock_summary(article.abstract or article.summary)
             
     def _generate_advanced_mock_summary_for_article(self, article: Article) -> str:
         """
@@ -273,15 +209,24 @@ DOI: {article.doi if hasattr(article, 'doi') and article.doi else 'Не указ
 """
 
     def find_references(self, article: Article) -> List[str]:
-        """Ищет источники в статье."""
-        try:
-            logger.info(f"Поиск источников для статьи: {article.title}")
+        """Ищет источники для статьи.
+        
+        Args:
+            article: Объект статьи
             
-            # Приводим строку к нижнему регистру для сравнения, не зависящего от регистра
+        Returns:
+            Список найденных источников
+        """
+        try:
+            # Приводим строку к нижнему регистру для сравнения
             service_lower = self.service.lower()
             
-            if service_lower == "openai" and self.api_key:
-                from openai import OpenAI
+            if service_lower == "gigachat" and self.gigachat_service:
+                logger.info("Используем GigaChat для поиска источников")
+                return self.gigachat_service.find_references(article)
+            elif service_lower == "openai" and self.api_key:
+                logger.info("Используем OpenAI для поиска источников")
+                logger.info(f"Поиск источников для статьи: {article.title}")
                 
                 # Подготавливаем данные о статье
                 article_info = f"""Название: {article.title}
@@ -360,7 +305,10 @@ DOI: {article.doi if hasattr(article, 'doi') and article.doi else 'Не указ
             # Приводим строку к нижнему регистру для сравнения, не зависящего от регистра
             service_lower = self.service.lower()
             
-            if service_lower == "openai" and self.api_key:
+            if service_lower == "gigachat" and self.gigachat_service:
+                logger.info("Используем GigaChat для генерации краткого содержания")
+                return self.gigachat_service.generate_summary(text, max_length)
+            elif service_lower == "openai" and self.api_key:
                 return self._generate_summary_openai(text, max_length)
             elif service_lower == "huggingface":
                 try:

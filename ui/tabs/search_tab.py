@@ -2,18 +2,31 @@
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QComboBox, QPushButton
+    QComboBox, QPushButton, QSpinBox, QListWidget, QListWidgetItem
 )
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon
+import logging
+from typing import Optional
+import re
 
 from ..custom_widgets import CustomSplitter, CollapsiblePanel
 from ..components.article_list import ArticleList
 from ..components.article_details import ArticleDetails
 from ..components.action_buttons import ActionButtons
+from models.article import Article
+from services.gigachat_service import GigaChatService
+from services.arxiv_service import ArxivService
+from utils.translator import translate_text
+
+# Настройка логгера
+logger = logging.getLogger(__name__)
 
 class SearchTab(QWidget):
     """Вкладка для поиска статей и отображения результатов."""
+    
+    # Сигнал о смене источника поиска
+    source_changed = pyqtSignal(str)
     
     def __init__(self, parent=None):
         """Инициализирует вкладку поиска.
@@ -23,6 +36,11 @@ class SearchTab(QWidget):
         """
         super().__init__(parent)
         self.parent = parent
+        # Инициализируем сервисы
+        self.gigachat_service = GigaChatService()
+        self.arxiv_service = ArxivService()
+        # По умолчанию используем ArxivService для поиска
+        self.search_service = self.arxiv_service
         self.setup_ui()
         
     def setup_ui(self):
@@ -124,15 +142,14 @@ class SearchTab(QWidget):
         search_container_layout.setContentsMargins(8, 8, 8, 8)
         search_container_layout.setSpacing(10)
 
-        # Иконка поиска
-        search_icon = QLabel()
-        search_icon.setPixmap(QIcon("ui/icons/search.svg").pixmap(QSize(20, 20)))
-        search_icon.setStyleSheet("QLabel { padding: 0; margin: 0; background: transparent; }")
-        search_container_layout.addWidget(search_icon)
+        # Выбор источника
+        self.source_combo = QComboBox()
+        self.source_combo.currentTextChanged.connect(self._on_source_changed)
+        search_container_layout.addWidget(self.source_combo)
 
         # Поле поиска
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Поиск...")
+        self.search_input.setPlaceholderText("Введите поисковый запрос...")
         self.search_input.setFixedWidth(300)
         self.search_input.returnPressed.connect(self._search_articles)
         self.search_input.setStyleSheet("""
@@ -149,7 +166,34 @@ class SearchTab(QWidget):
         """)
         search_container_layout.addWidget(self.search_input)
 
-        # Фильтры поиска
+        # Количество результатов
+        self.results_count = QSpinBox()
+        self.results_count.setRange(1, 100)
+        self.results_count.setValue(10)
+        search_container_layout.addWidget(QLabel("Результатов:"))
+        search_container_layout.addWidget(self.results_count)
+
+        # Кнопка поиска
+        self.search_button = QPushButton("Поиск")
+        self.search_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                min-width: 100px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:pressed {
+                background-color: #0D47A1;
+            }
+        """)
+        self.search_button.clicked.connect(self._search_articles)
+        search_container_layout.addWidget(self.search_button)
+
         filters_layout = QHBoxLayout()
         filters_layout.setSpacing(8)
 
@@ -206,27 +250,6 @@ class SearchTab(QWidget):
             }
         """)
         filters_layout.addWidget(self.date_filter)
-
-        # Кнопка поиска
-        search_button = QPushButton("Найти")
-        search_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                min-width: 100px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:pressed {
-                background-color: #0D47A1;
-            }
-        """)
-        search_button.clicked.connect(self._search_articles)
-        filters_layout.addWidget(search_button)
 
         filters_layout.addStretch()
         search_container_layout.addLayout(filters_layout)
@@ -323,55 +346,167 @@ class SearchTab(QWidget):
         
         return details_panel
         
+    @pyqtSlot(str)
+    def _on_source_changed(self, source: str):
+        """Обработчик смены источника поиска."""
+        if source == "КиберЛенинка":
+            self.search_service = self.cyberleninka_service
+        else:  # ArXiv
+            self.search_service = self.arxiv_service
+        self.source_changed.emit(source)
+        
+    @pyqtSlot()
     def _search_articles(self):
         """Выполняет поиск статей."""
-        if hasattr(self.parent, 'search_articles'):
-            query = self.search_input.text()
+        if not self.search_service:
+            logger.error("Сервис поиска не установлен")
+            return
+
+        query = self.search_input.text().strip()
+        if not query:
+            logger.warning("Пустой поисковый запрос")
+            return
+
+        try:
+            # Отключаем кнопку поиска и показываем статус
+            self.search_button.setEnabled(False)
+            self.search_button.setText("Поиск...")
+            
+            # Очищаем предыдущие результаты
+            self.clear_results()
+            
+            # Получаем параметры поиска
+            limit = self.results_count.value()
             search_type = self.search_type.currentText()
-            date_filter = self.date_filter.currentText()
             
-            self.parent.search_articles(query, search_type, date_filter)
+            # Модифицируем запрос в зависимости от типа поиска
+            if search_type == "Заголовок":
+                query = f"ti:{query}"
+            elif search_type == "Автор":
+                query = f"au:{query}"
+            elif search_type == "Аннотация":
+                query = f"abs:{query}"
+            elif search_type == "Категория":
+                query = f"cat:{query}"
             
+            # Выполняем поиск
+            articles = self.search_service.search_articles(
+                query=query,
+                limit=limit,
+                page=1
+            )
+            
+            if not articles:
+                logger.info("Поиск не дал результатов")
+                return
+                
+            # Добавляем результаты
+            for article in articles:
+                self.add_search_result(article)
+                
+            logger.info(f"Найдено {len(articles)} статей")
+            
+        except Exception as e:
+            logger.error(f"Ошибка при поиске: {str(e)}", exc_info=True)
+        finally:
+            # Восстанавливаем кнопку поиска
+            self.search_button.setEnabled(True)
+            self.search_button.setText("Поиск")
+            
+    @pyqtSlot()
     def _load_more_results(self):
         """Загружает дополнительные результаты поиска."""
         if hasattr(self.parent, 'load_more_results'):
             self.parent.load_more_results()
             
-    def _show_article_info(self, article):
+    @pyqtSlot(Article)
+    def _show_article_info(self, article: Article):
         """Отображает информацию о выбранной статье."""
         self.article_details.display_article(article)
         if hasattr(self.parent, 'statusBar'):
             self.parent.statusBar().showMessage(f"Выбрана статья: {article.title}")
             
+    @pyqtSlot()
     def _create_summary(self):
         """Создает краткое содержание для выбранной статьи."""
         if hasattr(self.parent, 'create_summary'):
             self.parent.create_summary()
             
+    @pyqtSlot()
     def _find_references(self):
         """Ищет источники для выбранной статьи."""
         if hasattr(self.parent, 'find_references'):
             self.parent.find_references()
             
+    @pyqtSlot()
     def _save_article(self):
         """Сохраняет выбранную статью в библиотеку."""
         if hasattr(self.parent, 'save_article'):
             self.parent.save_article()
             
+    @pyqtSlot()
     def _download_article(self):
         """Скачивает PDF версию статьи."""
         if hasattr(self.parent, 'download_article'):
             self.parent.download_article()
             
+    def add_source_selector(self, sources: list[str]):
+        """Добавляет селектор источников поиска.
+        
+        Args:
+            sources: Список доступных источников
+        """
+        self.source_combo.clear()
+        self.source_combo.addItems(sources)
+        # По умолчанию выбираем ArXiv
+        self.source_combo.setCurrentText("ArXiv")
+        
+    def set_search_service(self, service):
+        """Устанавливает сервис поиска.
+        
+        Args:
+            service: Сервис поиска
+        """
+        self.search_service = service
+        if service and hasattr(service, 'check_availability'):
+            if not service.check_availability():
+                logger.error("Сервис поиска недоступен")
+                self.search_button.setEnabled(False)
+                self.search_button.setText("Сервис недоступен")
+            else:
+                self.search_button.setEnabled(True)
+                self.search_button.setText("Поиск")
+        
     def add_search_result(self, article):
         """Добавляет статью в список результатов поиска.
         
         Args:
             article: Объект статьи
         """
+        # Переводим заголовок и аннотацию на русский, если они на английском
+        try:
+            if article.title and not self._is_russian(article.title):
+                article.title = translate_text(article.title, target_lang='ru')
+            if article.abstract and not self._is_russian(article.abstract):
+                article.abstract = translate_text(article.abstract, target_lang='ru')
+        except Exception as e:
+            logger.error(f"Ошибка при переводе: {str(e)}")
+            
         self.results_list.add_article(article)
         
     def clear_results(self):
         """Очищает список результатов поиска."""
         self.results_list.clear_list()
-        self.article_details.clear_details() 
+        self.article_details.clear_details()
+        
+    def _is_russian(self, text: str) -> bool:
+        """Проверяет, является ли текст русским.
+        
+        Args:
+            text: Проверяемый текст
+            
+        Returns:
+            True, если текст на русском языке
+        """
+        # Проверяем наличие кириллических символов
+        return bool(re.search('[а-яА-Я]', text)) 

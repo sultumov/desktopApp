@@ -4,6 +4,7 @@ import logging
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import QTimer
 
+# Настройка логгера
 logger = logging.getLogger(__name__)
 
 def copy_to_clipboard(text):

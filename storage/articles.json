@@ -20,7 +20,7 @@
             "math.GR",
             "20N05"
         ],
-        "added_date": "2025-05-12 23:35:42.944194",
+        "added_date": "2025-05-18 02:56:23.188652",
         "source": "Unknown",
         "citation_count": 0,
         "reference_count": 0,
@@ -84,5 +84,63 @@
         "summary": "We compute the equivariant cohomology of smooth Calogero-Moser spaces and\nsome associated symplectic resolutions of symplectic quotient singularities.",
         "references": [],
         "published": "2017-08-31 14:15:22+00:00"
+    },
+    {
+        "id": "http://arxiv.org/abs/1611.00467v1",
+        "title": "A Performance Survey on Stack-based and Register-based Virtual Machines",
+        "authors": [
+            "Ruijie Fang",
+            "Siqi Liu"
+        ],
+        "abstract": "Virtual machines have been widely adapted for high-level programming language\nimplementations and for providing a degree of platform neutrality. As the\noverall use and adaptation of virtual machines grow, the overall performance of\nvirtual machines has become a widely-discussed topic. In this paper, we present\na survey on the performance differences of the two most widely adapted types of\nvirtual machines - the stack-based virtual machine and the register-based\nvirtual machine - using various benchmark programs. Additionally, we adopted a\nnew approach of measuring performance by measuring the overall dispatch time,\namount of dispatches, fetch time, and execution time while running benchmarks\non custom-implemented, lightweight virtual machines. Finally, we present two\nlightweight, custom-designed, Turing-equivalent virtual machines that are\nspecifically designed in benchmarking virtual machine performance - the\n\"Conceptum\" stack-based virtual machine, and the \"Inertia\" register-based\nvirtual machine. Our result showed that while on average the register machine\nspends 20.39% less time in executing benchmarks than the stack machine, the\nstack-based virtual machine is still faster than the virtual machine regarding\nthe instruction fetch time.",
+        "year": 2016,
+        "doi": null,
+        "url": "http://arxiv.org/pdf/1611.00467v1",
+        "journal": null,
+        "volume": null,
+        "issue": null,
+        "pages": null,
+        "keywords": [],
+        "full_text": null,
+        "file_path": "storage\\articles\\http://arxiv.org/abs/1611.00467v1.pdf",
+        "categories": [
+            "cs.PL"
+        ],
+        "added_date": "2025-05-18 04:04:26.324200",
+        "source": "Unknown",
+        "citation_count": 0,
+        "reference_count": 0,
+        "summary": "Virtual machines have been widely adapted for high-level programming language\nimplementations and for providing a degree of platform neutrality. As the\noverall use and adaptation of virtual machines grow, the overall performance of\nvirtual machines has become a widely-discussed topic. In this paper, we present\na survey on the performance differences of the two most widely adapted types of\nvirtual machines - the stack-based virtual machine and the register-based\nvirtual machine - using various benchmark programs. Additionally, we adopted a\nnew approach of measuring performance by measuring the overall dispatch time,\namount of dispatches, fetch time, and execution time while running benchmarks\non custom-implemented, lightweight virtual machines. Finally, we present two\nlightweight, custom-designed, Turing-equivalent virtual machines that are\nspecifically designed in benchmarking virtual machine performance - the\n\"Conceptum\" stack-based virtual machine, and the \"Inertia\" register-based\nvirtual machine. Our result showed that while on average the register machine\nspends 20.39% less time in executing benchmarks than the stack machine, the\nstack-based virtual machine is still faster than the virtual machine regarding\nthe instruction fetch time.",
+        "references": [],
+        "published": "2016-11-02 04:37:13+00:00"
+    },
+    {
+        "id": "http://arxiv.org/abs/1909.03550v1",
+        "title": "Lecture Notes: Optimization for Machine Learning",
+        "authors": [
+            "Elad Hazan"
+        ],
+        "abstract": "Lecture notes on optimization for machine learning, derived from a course at\nPrinceton University and tutorials given in MLSS, Buenos Aires, as well as\nSimons Foundation, Berkeley.",
+        "year": 2019,
+        "doi": null,
+        "url": "http://arxiv.org/pdf/1909.03550v1",
+        "journal": null,
+        "volume": null,
+        "issue": null,
+        "pages": null,
+        "keywords": [],
+        "full_text": null,
+        "file_path": "storage\\articles\\http://arxiv.org/abs/1909.03550v1.pdf",
+        "categories": [
+            "cs.LG",
+            "stat.ML"
+        ],
+        "added_date": "2025-05-18 04:34:20.050667",
+        "source": "Unknown",
+        "citation_count": 0,
+        "reference_count": 0,
+        "summary": "Lecture notes on optimization for machine learning, derived from a course at\nPrinceton University and tutorials given in MLSS, Buenos Aires, as well as\nSimons Foundation, Berkeley.",
+        "references": [],
+        "published": "2019-09-08 21:49:42+00:00"
     }
 ]

@@ -3,9 +3,14 @@ ArXiv Assistant - приложение для работы с научными �
 """
 
 import sys
+import os
 import logging
 from PyQt6.QtWidgets import QApplication
 from ui.main_window import MainWindow
+from utils import ensure_dir_exists
+
+# Создаем директорию для логов
+ensure_dir_exists('logs')
 
 # Настройка логирования
 logging.basicConfig(
@@ -18,6 +23,8 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
 
 def main():
     """Точка входа в приложение."""

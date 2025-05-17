@@ -9,6 +9,7 @@ from typing import List, Optional, Dict
 from models.article import Article
 import os
 from functools import lru_cache
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -55,58 +56,84 @@ class ArxivService:
             url=result.pdf_url
         )
 
-    def search_articles(self, query: str, reset: bool = True) -> List[Article]:
+    def search_articles(self, query: str, limit: int = 10, page: int = 1,
+                       year_from: Optional[int] = None, year_to: Optional[int] = None,
+                       categories: Optional[List[str]] = None) -> List[Article]:
         """Выполняет поиск статей по запросу.
         
         Args:
             query: Поисковый запрос
-            reset: Сбросить текущий поиск и начать новый
+            limit: Максимальное количество статей
+            page: Номер страницы
+            year_from: Начальный год
+            year_to: Конечный год
+            categories: Список категорий для фильтрации
+            
+        Returns:
+            Список найденных статей
         """
         try:
-            if reset:
-                # Проверяем кэш при новом поиске
-                cached_results = self._get_from_cache(query)
-                if cached_results:
-                    logger.info("Возвращены результаты из кэша")
-                    self.search_results = cached_results
-                    return self.search_results[:self.page_size]
+            # Проверяем кэш при новом поиске
+            cached_results = self._get_from_cache(query)
+            if cached_results:
+                logger.info("Возвращены результаты из кэша")
+                self.search_results = cached_results
+                return self.search_results[:limit]
 
-                self.current_page = 0
-                self.current_query = query
-                self.search_results = []
-                self.has_more = True
+            self.current_page = page - 1  # Страницы в arxiv начинаются с 0
+            self.current_query = query
+            self.search_results = []
+            self.has_more = True
+            self.page_size = limit
             
             if not self.has_more:
                 return []
 
             logger.info(f"Поиск статей (страница {self.current_page}): {query}")
             
+            # Модифицируем запрос с учетом года
+            modified_query = query
+            if year_from or year_to:
+                date_range = []
+                if year_from:
+                    date_range.append(f"submittedDate:[{year_from} TO")
+                if year_to:
+                    date_range.append(f"{year_to}]")
+                elif year_from:
+                    date_range.append("*]")
+                if date_range:
+                    modified_query = f"{query} AND {' '.join(date_range)}"
+            
+            # Добавляем фильтрацию по категориям
+            if categories:
+                category_filter = " OR ".join([f"cat:{cat}" for cat in categories])
+                modified_query = f"{modified_query} AND ({category_filter})"
+            
             # Создаем объект поиска
             search = arxiv.Search(
-                query=query,
-                max_results=self.page_size,  # Возвращаемся к постраничной загрузке
+                query=modified_query,
+                max_results=limit,
                 sort_by=arxiv.SortCriterion.Relevance
             )
 
-            # Получаем результаты для текущей страницы
+            # Получаем результаты
             new_results = []
             try:
                 for result in self.client.results(search):
                     article = self._convert_result_to_article(result)
                     new_results.append(article)
+                    if len(new_results) >= limit:
+                        break
             except StopIteration:
                 self.has_more = False
 
             # Если получили меньше результатов, чем размер страницы
-            if len(new_results) < self.page_size:
+            if len(new_results) < limit:
                 self.has_more = False
 
-            if reset:
-                self.search_results = new_results
-                # Сохраняем в кэш только при новом поиске
-                self._add_to_cache(query, new_results)
-            else:
-                self.search_results.extend(new_results)
+            self.search_results = new_results
+            # Сохраняем в кэш
+            self._add_to_cache(query, new_results)
 
             self.current_page += 1
             
@@ -121,7 +148,11 @@ class ArxivService:
         """Загружает следующую страницу результатов."""
         if not self.has_more:
             return []
-        return self.search_articles(self.current_query, reset=False)
+        return self.search_articles(
+            query=self.current_query,
+            limit=self.page_size,
+            page=self.current_page + 1
+        )
 
     def has_more_results(self) -> bool:
         """Проверяет, есть ли еще результаты для загрузки."""
@@ -262,3 +293,55 @@ class ArxivService:
         except Exception as e:
             logger.error(f"Ошибка при скачивании PDF: {str(e)}")
             raise 
+
+    def find_references(self, article: Article) -> List[str]:
+        """Ищет источники для статьи.
+        
+        Args:
+            article: Объект статьи
+            
+        Returns:
+            Список найденных источников
+        """
+        try:
+            logger.info(f"Поиск источников для статьи: {article.title}")
+            
+            # Получаем текст статьи
+            text = self.get_article_text(article)
+            
+            # Ищем все упоминания источников в тексте
+            references = []
+            
+            # Паттерны для поиска источников
+            patterns = [
+                r'\[(\d+)\][\s\n]*([^[]+)',  # [1] Author et al.
+                r'(?<!\d)(\d{4})[\s\n]*([A-Z][^.]+\.)(?=\s|$)',  # Year Author et al.
+                r'([A-Z][a-z]+(?:\s+(?:et\.?\s+al\.?|and|&)\s+[A-Z][a-z]+)?)\s+\((\d{4})\)',  # Author (Year)
+            ]
+            
+            for pattern in patterns:
+                matches = re.finditer(pattern, text)
+                for match in matches:
+                    ref = match.group(0).strip()
+                    if ref and ref not in references:
+                        references.append(ref)
+            
+            # Если не нашли источники, возвращаем заглушку
+            if not references:
+                return [
+                    "Не удалось найти источники в тексте статьи.",
+                    "Возможные причины:",
+                    "1. Статья не содержит списка литературы",
+                    "2. Формат источников не распознан",
+                    "3. Ошибка при извлечении текста из PDF"
+                ]
+            
+            return references
+
+        except Exception as e:
+            logger.error(f"Ошибка при поиске источников: {str(e)}")
+            return [
+                "Произошла ошибка при поиске источников.",
+                f"Причина: {str(e)}",
+                "Попробуйте скачать PDF статьи и проверить источники вручную."
+            ] 

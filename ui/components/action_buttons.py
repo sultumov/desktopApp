@@ -5,44 +5,140 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import pyqtSignal
 
 class ActionButtons(QWidget):
-    """Компонент с кнопками для действий над статьей."""
+    """Панель с кнопками действий."""
     
-    # Сигналы для действий
+    # Сигналы
     summary_clicked = pyqtSignal()
     references_clicked = pyqtSignal()
+    copy_clicked = pyqtSignal()
     save_clicked = pyqtSignal()
     download_clicked = pyqtSignal()
-    copy_clicked = pyqtSignal()
     delete_clicked = pyqtSignal()
     export_clicked = pyqtSignal()
     
-    def __init__(self, parent=None, mode="search"):
-        """Инициализирует панель кнопок.
+    def __init__(self, mode="search", parent=None):
+        """Инициализирует панель с кнопками.
         
         Args:
+            mode: Режим отображения кнопок ("search", "summary" или "library")
             parent: Родительский виджет
-            mode: Режим кнопок ('search', 'library', 'summary', 'references')
         """
         super().__init__(parent)
         self.mode = mode
         self.setup_ui()
         
     def setup_ui(self):
-        """Настраивает внешний вид панели."""
-        self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(8)
+        """Настраивает интерфейс панели."""
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        
+        button_style = """
+            QPushButton {
+                color: white;
+                background-color: #3498DB;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                min-width: 120px;
+                font-size: 14px;
+            }
+            
+            QPushButton:hover {
+                background-color: #2980B9;
+            }
+            
+            QPushButton:pressed {
+                background-color: #2472A4;
+            }
+            
+            QPushButton[secondary="true"] {
+                color: #2C3E50;
+                background-color: #ECF0F1;
+            }
+            
+            QPushButton[secondary="true"]:hover {
+                background-color: #BDC3C7;
+            }
+            
+            QPushButton[warning="true"] {
+                color: white;
+                background-color: #E74C3C;
+            }
+            
+            QPushButton[warning="true"]:hover {
+                background-color: #C0392B;
+            }
+            
+            QPushButton:disabled {
+                background-color: #BDC3C7;
+                color: #95A5A6;
+            }
+        """
         
         if self.mode == "search":
-            self._setup_search_buttons()
-        elif self.mode == "library":
-            self._setup_library_buttons()
-        elif self.mode == "summary":
-            self._setup_summary_buttons()
-        elif self.mode == "references":
-            self._setup_references_buttons()
+            # Кнопка создания краткого содержания
+            self.summary_button = QPushButton("Краткое содержание")
+            self.summary_button.setProperty("secondary", True)
+            self.summary_button.setStyleSheet(button_style)
+            self.summary_button.clicked.connect(self.summary_clicked.emit)
+            layout.addWidget(self.summary_button)
             
-        self.layout.addStretch()
+            # Кнопка поиска источников
+            self.references_button = QPushButton("Найти источники")
+            self.references_button.setProperty("secondary", True)
+            self.references_button.setStyleSheet(button_style)
+            self.references_button.clicked.connect(self.references_clicked.emit)
+            layout.addWidget(self.references_button)
+            
+            # Кнопка сохранения в библиотеку
+            self.save_button = QPushButton("В библиотеку")
+            self.save_button.setStyleSheet(button_style)
+            self.save_button.clicked.connect(self.save_clicked.emit)
+            layout.addWidget(self.save_button)
+            
+            # Кнопка скачивания PDF
+            self.download_button = QPushButton("Скачать PDF")
+            self.download_button.setStyleSheet(button_style)
+            self.download_button.clicked.connect(self.download_clicked.emit)
+            layout.addWidget(self.download_button)
+            
+        elif self.mode == "summary":
+            # Кнопка копирования
+            self.copy_button = QPushButton("Копировать")
+            self.copy_button.setProperty("secondary", True)
+            self.copy_button.setStyleSheet(button_style)
+            self.copy_button.clicked.connect(self.copy_clicked.emit)
+            layout.addWidget(self.copy_button)
+            
+            # Кнопка сохранения
+            self.save_button = QPushButton("Сохранить")
+            self.save_button.setStyleSheet(button_style)
+            self.save_button.clicked.connect(self.save_clicked.emit)
+            layout.addWidget(self.save_button)
+            
+        elif self.mode == "library":
+            # Кнопка удаления
+            self.delete_button = QPushButton("Удалить")
+            self.delete_button.setProperty("warning", True)
+            self.delete_button.setStyleSheet(button_style)
+            self.delete_button.clicked.connect(self.delete_clicked.emit)
+            layout.addWidget(self.delete_button)
+            
+            # Кнопка экспорта
+            self.export_button = QPushButton("Экспорт")
+            self.export_button.setProperty("secondary", True)
+            self.export_button.setStyleSheet(button_style)
+            self.export_button.clicked.connect(self.export_clicked.emit)
+            layout.addWidget(self.export_button)
+            
+            # Кнопка скачивания PDF
+            self.download_button = QPushButton("Скачать PDF")
+            self.download_button.setStyleSheet(button_style)
+            self.download_button.clicked.connect(self.download_clicked.emit)
+            layout.addWidget(self.download_button)
+            
+        layout.addStretch()
         
     def _setup_search_buttons(self):
         """Настраивает кнопки для режима поиска."""

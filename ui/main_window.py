@@ -1,7 +1,8 @@
 """Главное окно приложения ArXiv Assistant."""
 
-import os
+import sys
 import logging
+import os
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QToolBar,
     QToolButton, QTabWidget, QApplication, QDialog, 
@@ -11,6 +12,7 @@ from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QIcon
 
 from services import ArxivService, AIService, StorageService, UserSettings
+from services.cyberleninka_service import CyberleninkaService
 from .dialogs.settings_dialog import SettingsDialog
 from .tabs.search_tab import SearchTab
 from .tabs.summary_tab import SummaryTab
@@ -28,6 +30,9 @@ from utils import (
     UserSettingsManager
 )
 
+# Настройка логгера
+logger = logging.getLogger(__name__)
+
 class MainWindow(QMainWindow):
     """Главное окно приложения."""
     
@@ -37,6 +42,7 @@ class MainWindow(QMainWindow):
         
         # Инициализация сервисов
         self.arxiv_service = ArxivService()
+        self.cyberleninka_service = CyberleninkaService()
         self.ai_service = AIService()
         self.storage_service = StorageService()
         self.user_settings = UserSettings()
@@ -94,6 +100,15 @@ class MainWindow(QMainWindow):
         self.resize_timer.setInterval(500)  # Задержка в 500 мс
         self.resize_timer.setSingleShot(True)
         self.resize_timer.timeout.connect(self.save_window_size)
+        
+        # Добавляем выбор источника в поисковую вкладку
+        self.search_tab.add_source_selector([
+            "ArXiv",
+            "КиберЛенинка"
+        ])
+        
+        # Подключаем обработчик выбора источника
+        self.search_tab.source_changed.connect(self._on_source_changed)
         
     def create_toolbar(self):
         """Создает панель инструментов."""
@@ -333,8 +348,9 @@ class MainWindow(QMainWindow):
             set_status_message(self.statusBar(), "Выберите статью для создания краткого содержания")
             return
             
-        set_status_message(self.statusBar(), "Создание краткого содержания...")
+        set_status_message(self.statusBar(), "Создание краткого содержания с помощью GigaChat...")
         
+        # Используем GigaChat для создания краткого содержания
         summary = self.ai_service.create_summary(article)
         self.summary_tab.set_summary(summary, article.title)
         self.tab_widget.setCurrentIndex(1)  # Переключаемся на вкладку с кратким содержанием
@@ -369,7 +385,8 @@ class MainWindow(QMainWindow):
             
         set_status_message(self.statusBar(), "Поиск источников...")
         
-        references = self.ai_service.find_references(article)
+        # Используем arxiv_service для поиска источников
+        references = self.arxiv_service.find_references(article)
         self.tab_widget.setCurrentIndex(2)  # Переключаемся на вкладку с источниками
         self.references_tab.clear_references()
         for ref in references:
@@ -414,7 +431,6 @@ class MainWindow(QMainWindow):
         articles = self.storage_service.get_articles()
         
         # Выводим отладочную информацию
-        logger = logging.getLogger(__name__)
         logger.info(f"Загружаем статьи из хранилища. Всего статей: {len(articles)}")
         
         # Если статей нет, показываем сообщение
@@ -563,3 +579,10 @@ class MainWindow(QMainWindow):
             success, message = open_file(file_name)
             if not success:
                 set_status_message(self.statusBar(), message) 
+
+    def _on_source_changed(self, source: str):
+        """Обработчик смены источника поиска."""
+        if source == "КиберЛенинка":
+            self.search_tab.set_search_service(self.cyberleninka_service)
+        else:
+            self.search_tab.set_search_service(self.arxiv_service) 

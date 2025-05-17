@@ -4,7 +4,9 @@ import os
 import json
 import logging
 from pathlib import Path
+from typing import Any, Dict, Optional
 
+# Настройка логгера
 logger = logging.getLogger(__name__)
 
 def load_json_settings(file_path, default=None):

@@ -3,8 +3,12 @@
 import os
 import logging
 import requests
+from pathlib import Path
+from typing import Optional
+from PyPDF2 import PdfReader
 from urllib.parse import urlparse
 
+# Настройка логгера
 logger = logging.getLogger(__name__)
 
 def download_pdf(url, destination_path, chunk_size=8192):

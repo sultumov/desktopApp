@@ -1,9 +1,19 @@
 """Утилиты для работы с файлами."""
 
 import os
+import json
 import logging
+from pathlib import Path
+from typing import Optional, Dict, Any
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from docx import Document
+from docx.shared import Pt
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
+# Настройка логгера
 logger = logging.getLogger(__name__)
 
 def save_text_to_file(parent, text, title="Сохранить файл", default_path="", file_filter="Текстовые файлы (*.txt);;Все файлы (*.*)"):
@@ -59,7 +69,8 @@ def ensure_dir_exists(directory):
             return False
     return True
 
-def export_article_to_file(parent, article, title="Экспортировать статью", default_path="", file_filter="Текстовые файлы (*.txt);;Все файлы (*.*)"):
+def export_article_to_file(parent, article, title="Экспортировать статью", default_path="", 
+                          file_filter="Текстовые файлы (*.txt);;PDF файлы (*.pdf);;Word документы (*.docx);;Все файлы (*.*)"):
     """Экспортирует информацию о статье в файл.
 
     Args:
@@ -75,7 +86,7 @@ def export_article_to_file(parent, article, title="Экспортировать 
     if not article:
         return False, "Статья не выбрана"
 
-    file_name, _ = QFileDialog.getSaveFileName(
+    file_name, selected_filter = QFileDialog.getSaveFileName(
         parent,
         title,
         default_path,
@@ -86,24 +97,131 @@ def export_article_to_file(parent, article, title="Экспортировать 
         return False, "Отменено пользователем"
 
     try:
-        # Формируем содержимое файла
-        content = f"Название: {article.title}\n"
-        content += f"Авторы: {', '.join(article.authors)}\n"
-        content += f"Дата публикации: {article.published.strftime('%d.%m.%Y')}\n"
-        content += f"Категории: {', '.join(article.categories)}\n"
-        content += f"DOI: {article.doi or 'Не указан'}\n"
-        content += f"URL: {article.url}\n\n"
-        content += "Аннотация:\n"
-        content += f"{article.summary}\n"
-
-        # Сохраняем файл
-        with open(file_name, 'w', encoding='utf-8') as f:
-            f.write(content)
-
-        return True, f"Статья экспортирована в {file_name}"
+        if file_name.lower().endswith('.pdf'):
+            return export_to_pdf(file_name, article)
+        elif file_name.lower().endswith('.docx'):
+            return export_to_docx(file_name, article)
+        else:
+            return export_to_txt(file_name, article)
     except Exception as e:
         logger.error(f"Ошибка при экспорте статьи в файл {file_name}: {str(e)}")
         return False, f"Ошибка при экспорте статьи: {str(e)}"
+
+def export_to_txt(file_name, article):
+    """Экспортирует статью в текстовый файл."""
+    content = format_article_content(article)
+    with open(file_name, 'w', encoding='utf-8') as f:
+        f.write(content)
+    return True, f"Статья экспортирована в {file_name}"
+
+def export_to_pdf(file_name, article):
+    """Экспортирует статью в PDF файл."""
+    doc = SimpleDocTemplate(file_name, pagesize=letter)
+    styles = getSampleStyleSheet()
+    
+    # Создаем стили
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        spaceAfter=30
+    )
+    
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=12,
+        spaceAfter=12
+    )
+    
+    normal_style = styles['Normal']
+    
+    # Создаем элементы документа
+    elements = []
+    
+    # Заголовок
+    elements.append(Paragraph(article.title, title_style))
+    elements.append(Spacer(1, 12))
+    
+    # Авторы
+    elements.append(Paragraph("Авторы:", heading_style))
+    elements.append(Paragraph(', '.join(article.authors), normal_style))
+    elements.append(Spacer(1, 12))
+    
+    # Дата публикации
+    elements.append(Paragraph("Дата публикации:", heading_style))
+    elements.append(Paragraph(article.published.strftime('%d.%m.%Y'), normal_style))
+    elements.append(Spacer(1, 12))
+    
+    # Категории
+    elements.append(Paragraph("Категории:", heading_style))
+    elements.append(Paragraph(', '.join(article.categories), normal_style))
+    elements.append(Spacer(1, 12))
+    
+    # DOI и URL
+    if article.doi:
+        elements.append(Paragraph("DOI:", heading_style))
+        elements.append(Paragraph(article.doi, normal_style))
+        elements.append(Spacer(1, 12))
+    
+    elements.append(Paragraph("URL:", heading_style))
+    elements.append(Paragraph(article.url, normal_style))
+    elements.append(Spacer(1, 12))
+    
+    # Аннотация
+    elements.append(Paragraph("Аннотация:", heading_style))
+    elements.append(Paragraph(article.summary, normal_style))
+    
+    # Создаем PDF
+    doc.build(elements)
+    return True, f"Статья экспортирована в PDF: {file_name}"
+
+def export_to_docx(file_name, article):
+    """Экспортирует статью в DOCX файл."""
+    doc = Document()
+    
+    # Заголовок
+    doc.add_heading(article.title, level=1)
+    
+    # Авторы
+    doc.add_heading("Авторы:", level=2)
+    doc.add_paragraph(', '.join(article.authors))
+    
+    # Дата публикации
+    doc.add_heading("Дата публикации:", level=2)
+    doc.add_paragraph(article.published.strftime('%d.%m.%Y'))
+    
+    # Категории
+    doc.add_heading("Категории:", level=2)
+    doc.add_paragraph(', '.join(article.categories))
+    
+    # DOI и URL
+    if article.doi:
+        doc.add_heading("DOI:", level=2)
+        doc.add_paragraph(article.doi)
+    
+    doc.add_heading("URL:", level=2)
+    doc.add_paragraph(article.url)
+    
+    # Аннотация
+    doc.add_heading("Аннотация:", level=2)
+    doc.add_paragraph(article.summary)
+    
+    # Сохраняем документ
+    doc.save(file_name)
+    return True, f"Статья экспортирована в DOCX: {file_name}"
+
+def format_article_content(article):
+    """Форматирует содержимое статьи для текстового файла."""
+    content = f"Название: {article.title}\n"
+    content += f"Авторы: {', '.join(article.authors)}\n"
+    content += f"Дата публикации: {article.published.strftime('%d.%m.%Y')}\n"
+    content += f"Категории: {', '.join(article.categories)}\n"
+    content += f"DOI: {article.doi or 'Не указан'}\n"
+    content += f"URL: {article.url}\n\n"
+    content += "Аннотация:\n"
+    content += f"{article.summary}\n"
+    return content
 
 def open_file(file_path):
     """Открывает файл в ассоциированной программе.

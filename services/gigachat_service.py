@@ -45,7 +45,8 @@ import logging
 from typing import List, Optional
 from dotenv import load_dotenv
 import gigachat
-# from gigachat.models import Chat, Messages, MessagesRole
+from gigachat import GigaChat
+from gigachat.models import Chat, Messages, MessagesRole
 
 from models.article import Article
 
@@ -64,23 +65,19 @@ class GigaChatService:
         self.credentials = os.getenv("GIGACHAT_CREDENTIALS")
         self.verify_ssl = os.getenv("GIGACHAT_VERIFY_SSL", "true").lower() == "true"
         
+        # Удаляем кавычки из API ключа, если они есть
+        if self.api_key:
+            self.api_key = self.api_key.strip('"\'')
+            logger.info(f"API ключ GigaChat загружен: {self.api_key[:5]}...{self.api_key[-5:]}")
+        
         if not (self.api_key or self.credentials):
             logger.warning("Не найден API ключ или учетные данные для GigaChat")
             
-        # Инициализация клиента
-        try:
-            if self.api_key:
-                self.client = GigaChat(credentials=self.api_key, verify_ssl=self.verify_ssl)
-            elif self.credentials:
-                self.client = GigaChat(credentials=self.credentials, verify_ssl=self.verify_ssl)
-            else:
-                self.client = None
-                logger.error("Не удалось инициализировать клиент GigaChat")
-        except Exception as e:
-            logger.error(f"Ошибка при инициализации GigaChat: {str(e)}")
-            self.client = None
-            
-    def create_summary(self, article: Article, style: str = "Краткий обзор", max_length: int = 500) -> str:
+        # В этой версии не инициализируем клиент в конструкторе,
+        # а будем создавать его каждый раз при вызове через конструкцию with
+        self.client = None
+        
+    def create_summary(self, article: Article, style: str = "обзор", max_length: int = 1000) -> str:
         """Создает краткое содержание статьи.
         
         Args:
@@ -91,11 +88,13 @@ class GigaChatService:
         Returns:
             Краткое содержание статьи
         """
-        if not self.client:
-            logger.error("Клиент GigaChat не инициализирован")
+        if not self.api_key:
+            logger.error("API ключ GigaChat не установлен")
             return self._generate_mock_summary(article)
             
         try:
+            logger.info(f"Создание краткого содержания для статьи: {article.title}")
+            
             # Подготавливаем данные о статье
             article_info = f"""Название: {article.title}
 Авторы: {', '.join(article.authors)}
@@ -124,34 +123,41 @@ DOI: {article.doi if hasattr(article, 'doi') and article.doi else 'Не указ
 Анализируй научные аббревиатуры и термины. Сохраняй научную точность и конкретность.
 Старайся подчеркнуть новизну и уникальность исследования."""
 
-            # Отправляем запрос к API
-            response = self.client.chat(
-                messages=[
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": f"Создай {style.lower()} следующей научной статьи, используя не более {max_length} слов.\n\nИнформация о статье:\n{article_info}"}
-                ]
-            )
+            # Создаем полный запрос, комбинируя системный промпт и информацию о статье
+            query = f"{system_message}\n\nСоздай {style.lower()} следующей научной статьи, используя не более {max_length} слов.\n\nИнформация о статье:\n{article_info}"
+            
+            logger.info("Отправка запроса к GigaChat API")
+            
+            # Используем контекстный менеджер для работы с API согласно документации
+            # и отключаем проверку SSL сертификатов
+            with GigaChat(credentials=self.api_key, verify_ssl_certs=False) as giga:
+                response = giga.chat(query)
+            
+            logger.info("Ответ от GigaChat API получен")
             
             return response.choices[0].message.content
             
         except Exception as e:
-            logger.error(f"Ошибка при создании краткого содержания: {str(e)}")
+            logger.error(f"Ошибка при создании краткого содержания: {str(e)}", exc_info=True)
             return self._generate_mock_summary(article)
             
-    def find_references(self, article: Article) -> List[str]:
+    def find_references(self, article: Article, article_text: str = None) -> List[str]:
         """Ищет источники для статьи.
         
         Args:
             article: Объект статьи
+            article_text: Текст статьи (опционально)
             
         Returns:
             Список найденных источников
         """
-        if not self.client:
-            logger.error("Клиент GigaChat не инициализирован")
+        if not self.api_key:
+            logger.error("API ключ GigaChat не установлен")
             return self._generate_mock_references()
             
         try:
+            logger.info(f"Поиск источников для статьи: {article.title}")
+            
             # Подготавливаем данные о статье
             article_info = f"""Название: {article.title}
 Авторы: {', '.join(article.authors)}
@@ -159,6 +165,13 @@ DOI: {article.doi if hasattr(article, 'doi') and article.doi else 'Не указ
 Категории: {', '.join(article.categories) if article.categories else 'Не указаны'}
 Год: {article.year or 'Не указан'}
 """
+            
+            # Добавляем текст статьи, если он доступен
+            if article_text and len(article_text) > 100:
+                # Ограничиваем размер текста для запроса
+                max_text_length = 3000
+                truncated_text = article_text[:max_text_length] + "..." if len(article_text) > max_text_length else article_text
+                article_info += f"\nФрагмент текста статьи:\n{truncated_text}"
 
             # Системный промпт
             system_message = """Ты - научный ассистент, который помогает находить релевантные источники для научных статей.
@@ -173,22 +186,28 @@ DOI: {article.doi if hasattr(article, 'doi') and article.doi else 'Не указ
 
 Используй стандартный формат цитирования.
 Источники должны быть реальными и актуальными.
-Отдавай предпочтение высокоцитируемым работам и статьям из уважаемых журналов."""
+Отдавай предпочтение высокоцитируемым работам и статьям из уважаемых журналов.
 
-            # Отправляем запрос к API
-            response = self.client.chat(
-                messages=[
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": f"Предложи релевантные источники для следующей научной статьи:\n\n{article_info}"}
-                ]
-            )
+Тщательно анализируй содержание статьи и предлагай источники, максимально связанные с её темой."""
+
+            # Создаем полный запрос, комбинируя системный промпт и информацию о статье
+            query = f"{system_message}\n\nПредложи релевантные источники для следующей научной статьи:\n\n{article_info}"
+            
+            logger.info("Отправка запроса к GigaChat API для поиска источников")
+            
+            # Используем контекстный менеджер для работы с API согласно документации
+            # и отключаем проверку SSL сертификатов
+            with GigaChat(credentials=self.api_key, verify_ssl_certs=False) as giga:
+                response = giga.chat(query)
+            
+            logger.info("Ответ от GigaChat API получен")
             
             # Разбираем ответ и форматируем источники
             references = response.choices[0].message.content.split("\n\n")
             return [ref.strip() for ref in references if ref.strip()]
             
         except Exception as e:
-            logger.error(f"Ошибка при поиске источников: {str(e)}")
+            logger.error(f"Ошибка при поиске источников: {str(e)}", exc_info=True)
             return self._generate_mock_references()
             
     def _generate_mock_summary(self, article: Article) -> str:

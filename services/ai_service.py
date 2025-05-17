@@ -73,6 +73,7 @@ import logging
 import random
 import re
 from dotenv import load_dotenv
+from openai import OpenAI
 
 from models.article import Article, Author
 from .gigachat_service import GigaChatService
@@ -221,9 +222,28 @@ class AIService:
             # Приводим строку к нижнему регистру для сравнения
             service_lower = self.service.lower()
             
+            # Пытаемся получить текст статьи или хотя бы аннотацию
+            article_text = article.abstract or article.summary
+            
+            # Если у нас есть доступ к ArxivService, попробуем получить полный текст
+            try:
+                from services import ArxivService
+                arxiv_service = ArxivService()
+                # Попытка получить полный текст статьи
+                if article.id and article.id.startswith("http"):
+                    logger.info(f"Пытаемся получить полный текст статьи: {article.title}")
+                    full_text = arxiv_service.get_article_text(article)
+                    if full_text and len(full_text) > 100 and "Не удалось" not in full_text:
+                        article_text = full_text
+                        logger.info(f"Получен полный текст статьи ({len(full_text)} символов)")
+                    else:
+                        logger.warning("Не удалось получить полный текст, используем аннотацию")
+            except Exception as e:
+                logger.warning(f"Ошибка при получении текста статьи: {str(e)}")
+            
             if service_lower == "gigachat" and self.gigachat_service:
                 logger.info("Используем GigaChat для поиска источников")
-                return self.gigachat_service.find_references(article)
+                return self.gigachat_service.find_references(article, article_text)
             elif service_lower == "openai" and self.api_key:
                 logger.info("Используем OpenAI для поиска источников")
                 logger.info(f"Поиск источников для статьи: {article.title}")
@@ -235,6 +255,12 @@ class AIService:
 Категории: {', '.join(article.categories)}
 Год: {article.year}
 """
+
+                if article_text and len(article_text) > 200:
+                    # Ограничиваем размер текста для запроса
+                    max_text_length = 3000
+                    truncated_text = article_text[:max_text_length] + "..." if len(article_text) > max_text_length else article_text
+                    article_info += f"\nФрагмент текста статьи:\n{truncated_text}"
                 
                 # Настраиваем клиента OpenAI
                 os.environ["OPENAI_API_KEY"] = self.api_key

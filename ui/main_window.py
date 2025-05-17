@@ -376,22 +376,48 @@ class MainWindow(QMainWindow):
                 
     # Методы для работы с источниками
     @gui_exception_handler()
-    def find_references(self):
-        """Ищет источники для выбранной статьи."""
-        article = self.search_tab.results_list.get_selected_article()
+    def find_references(self, article=None):
+        """Ищет источники для выбранной статьи.
+        
+        Args:
+            article: Объект статьи (опционально). Если не указан, берется выбранная статья.
+        """
+        if article is None:
+            article = self.search_tab.results_list.get_selected_article()
+            
         if not article:
             set_status_message(self.statusBar(), "Выберите статью для поиска источников")
             return
             
-        set_status_message(self.statusBar(), "Поиск источников...")
+        set_status_message(self.statusBar(), "Поиск источников и анализ текста статьи с помощью GigaChat...")
         
-        # Используем arxiv_service для поиска источников
-        references = self.arxiv_service.find_references(article)
-        self.tab_widget.setCurrentIndex(2)  # Переключаемся на вкладку с источниками
-        self.references_tab.clear_references()
-        for ref in references:
-            self.references_tab.add_reference(ref)
-        set_status_message(self.statusBar(), f"Найдено источников: {len(references)}")
+        try:
+            # Используем ai_service для поиска источников через GigaChat
+            references = self.ai_service.find_references(article)
+            
+            if not references:
+                set_status_message(self.statusBar(), "Не удалось найти источники для данной статьи")
+                return
+                
+            self.tab_widget.setCurrentIndex(2)  # Переключаемся на вкладку с источниками
+            self.references_tab.clear_references()
+            
+            # Добавляем найденные источники в список
+            for ref in references:
+                self.references_tab.add_reference(ref)
+            
+            set_status_message(self.statusBar(), f"Найдено источников: {len(references)}")
+            
+        except Exception as e:
+            logger.error(f"Ошибка при поиске источников: {str(e)}", exc_info=True)
+            set_status_message(self.statusBar(), f"Ошибка при поиске источников: {str(e)}")
+            
+            # Добавляем информацию о проблеме на вкладку с источниками
+            self.tab_widget.setCurrentIndex(2)  # Переключаемся на вкладку с источниками
+            self.references_tab.clear_references()
+            self.references_tab.add_reference("Не удалось найти источники для данной статьи")
+            self.references_tab.add_reference(f"Причина: {str(e)}")
+            self.references_tab.add_reference("Убедитесь, что у вас правильно настроен API ключ GigaChat в настройках")
             
     @gui_exception_handler()
     def copy_references(self):

@@ -10,8 +10,8 @@
                 756
             ],
             "summary_splitter": [
-                175,
-                325
+                166,
+                308
             ],
             "references_splitter": [
                 162,
@@ -22,19 +22,19 @@
                 655
             ],
             "library_splitter": [
-                162,
-                472
+                269,
+                756
             ]
         },
         "window_size": [
-            1536,
+            1233,
             800
         ],
         "window_position": [
-            62,
-            -7
+            132,
+            8
         ],
-        "current_tab": 1,
+        "current_tab": 3,
         "theme": "light"
     }
 }

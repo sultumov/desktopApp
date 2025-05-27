@@ -476,7 +476,7 @@ class SearchTab(QWidget):
             else:
                 self.search_button.setEnabled(True)
                 self.search_button.setText("Поиск")
-        
+            
     def add_search_result(self, article):
         """Добавляет статью в список результатов поиска.
         
@@ -497,7 +497,7 @@ class SearchTab(QWidget):
     def clear_results(self):
         """Очищает список результатов поиска."""
         self.results_list.clear_list()
-        self.article_details.clear_details()
+        self.article_details.clear_details() 
         
     def _is_russian(self, text: str) -> bool:
         """Проверяет, является ли текст русским.

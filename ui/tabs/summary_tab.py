@@ -257,7 +257,7 @@ class SummaryTab(QWidget):
         top_layout.addWidget(button_panel)
         
         return top_panel
-
+        
     def _create_content_panel(self):
         """Создает панель содержания.
         
@@ -309,7 +309,7 @@ class SummaryTab(QWidget):
         bottom_layout.addWidget(action_panel)
         
         return bottom_panel
-
+        
     def dragEnterEvent(self, event: QDragEnterEvent):
         """Обрабатывает начало перетаскивания файла."""
         if event.mimeData().hasUrls():

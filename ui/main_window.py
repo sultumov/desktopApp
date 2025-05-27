@@ -401,8 +401,8 @@ class MainWindow(QMainWindow):
                 
             self.tab_widget.setCurrentIndex(2)  # Переключаемся на вкладку с источниками
             self.references_tab.clear_references()
-            
-            # Добавляем найденные источники в список
+
+                # Добавляем найденные источники в список
             for ref in references:
                 self.references_tab.add_reference(ref)
             

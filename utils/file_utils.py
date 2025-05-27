@@ -12,6 +12,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from sympy import content
 
 # Настройка логгера
 logger = logging.getLogger(__name__)

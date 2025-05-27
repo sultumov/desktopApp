@@ -73,12 +73,12 @@ class ArxivService:
             Список найденных статей
         """
         try:
-            # Проверяем кэш при новом поиске
+                # Проверяем кэш при новом поиске
             cached_results = self._get_from_cache(query)
             if cached_results:
                 logger.info("Возвращены результаты из кэша")
                 self.search_results = cached_results
-                return self.search_results[:limit]
+            return self.search_results[:limit]
 
             self.current_page = page - 1  # Страницы в arxiv начинаются с 0
             self.current_query = query
@@ -131,9 +131,9 @@ class ArxivService:
             if len(new_results) < limit:
                 self.has_more = False
 
-            self.search_results = new_results
+                self.search_results = new_results
             # Сохраняем в кэш
-            self._add_to_cache(query, new_results)
+                self._add_to_cache(query, new_results)
 
             self.current_page += 1
             

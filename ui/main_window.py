@@ -3,6 +3,7 @@
 import sys
 import logging
 import os
+import re
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QToolBar,
     QToolButton, QTabWidget, QApplication, QDialog, 
@@ -29,6 +30,7 @@ from utils import (
     load_env_settings, save_env_settings, get_config_dir, get_user_data_dir,
     UserSettingsManager
 )
+from utils.translator import translate_text
 
 # Настройка логгера
 logger = logging.getLogger(__name__)
@@ -40,18 +42,27 @@ class MainWindow(QMainWindow):
         """Инициализирует главное окно приложения."""
         super().__init__()
         
-        # Инициализация сервисов
-        self.arxiv_service = ArxivService()
-        self.cyberleninka_service = CyberleninkaService()
-        self.ai_service = AIService()
-        self.storage_service = StorageService()
-        self.user_settings = UserSettings()
-        
-        # Настройка главного окна
-        self.setup_ui()
-        
-        # Загружаем статьи в библиотеку при запуске
-        self.load_library_articles()
+        try:
+            # Инициализация сервисов
+            self.arxiv_service = ArxivService()
+            self.cyberleninka_service = CyberleninkaService()
+            self.ai_service = AIService()
+            self.storage_service = StorageService()
+            self.user_settings = UserSettings()
+
+            # Настройка главного окна
+            self.setup_ui()
+
+            # Загружаем статьи в библиотеку при запуске
+            self.load_library_articles()
+
+        except Exception as e:
+            logger.error(f"Ошибка при инициализации главного окна: {str(e)}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Ошибка",
+                "Произошла ошибка при инициализации приложения. Проверьте логи для деталей."
+            )
         
     def setup_ui(self):
         """Настраивает пользовательский интерфейс."""
@@ -269,38 +280,119 @@ class MainWindow(QMainWindow):
         
     # Методы для работы с поиском статей
     @gui_exception_handler()
+    def _translate_arxiv_articles(self, articles: list) -> list:
+        """Переводит данные статей ArXiv на русский язык."""
+        try:
+            for article in articles:
+                article.title = translate_text(article.title, 'ru')
+                if article.abstract:
+                    article.abstract = translate_text(article.abstract, 'ru')
+                if article.categories:
+                    translated_categories = []
+                    for category in article.categories:
+                        translated = translate_text(category, 'ru')
+                        translated_categories.append(translated)
+                    article.categories = translated_categories
+            return articles
+        except Exception as e:
+            logger.error(f"Ошибка при переводе статей: {str(e)}", exc_info=True)
+            return articles
+
+    @gui_exception_handler()
     def search_articles(self, query=None, search_type=None, date_filter=None):
         """Выполняет поиск статей."""
-        # Получаем параметры поиска, если они не переданы
-        if query is None:
-            query = self.search_tab.search_input.text()
-        if search_type is None:
-            search_type = self.search_tab.search_type.currentText()
-        if date_filter is None:
-            date_filter = self.search_tab.date_filter.currentText()
+        try:
+            if not query:
+                return
+                
+            # Получаем текущий источник
+            source = self.search_tab.get_current_source()
             
-        # Проверяем, не пуст ли запрос
-        if not query:
-            set_status_message(self.statusBar(), "Введите запрос для поиска")
-            return
+            # Проверяем язык запроса
+            is_russian_query = bool(re.search('[а-яА-Я]', query))
             
-        # Очищаем предыдущие результаты
-        self.search_tab.clear_results()
-        self.search_tab.search_input.setEnabled(False)
-        set_status_message(self.statusBar(), "Выполняется поиск...")
-        
-        # Модифицируем запрос в зависимости от типа поиска и фильтра даты
-        modified_query = self._build_search_query(query, search_type, date_filter)
-        
-        # Выполняем поиск
-        results = self.arxiv_service.search_articles(modified_query)
-        
-        # Добавляем результаты в список
-        for article in results:
-            self.search_tab.add_search_result(article)
+            # Если запрос на русском, используем только КиберЛенинку
+            if is_russian_query and source == "ArXiv":
+                show_warning_message(
+                    self,
+                    "Русскоязычный запрос",
+                    "Для поиска на русском языке используйте КиберЛенинку. Переключаем источник автоматически."
+                )
+                self.search_tab.set_source("КиберЛенинка")
+                source = "КиберЛенинка"
             
-        set_status_message(self.statusBar(), f"Найдено статей: {len(results)}")
-        self.search_tab.search_input.setEnabled(True)
+            # Формируем поисковый запрос
+            search_query = self._build_search_query(query, search_type, date_filter)
+            
+            # Отключаем элементы управления на время поиска
+            self.search_tab._set_controls_enabled(False)
+            
+            try:
+                # Выполняем поиск в зависимости от выбранного источника
+                if source == "ArXiv":
+                    # Для ArXiv переводим запрос на английский
+                    translated_query = translate_text(search_query, 'en')
+                    set_status_message(self.statusBar(), "Выполняется поиск в ArXiv...")
+                    
+                    articles = self.arxiv_service.search_articles(translated_query)
+                    
+                    if not articles:
+                        set_status_message(self.statusBar(), "Статьи не найдены")
+                        show_info_message(
+                            self,
+                            "Результаты поиска",
+                            "По вашему запросу ничего не найдено. Попробуйте изменить запрос или параметры поиска."
+                        )
+                        return
+                    
+                    # Переводим результаты на русский
+                    set_status_message(self.statusBar(), "Переводим результаты на русский язык...")
+                    articles = self._translate_arxiv_articles(articles)
+                    
+                    # Обновляем UI
+                    self.search_tab.display_results(articles)
+                    set_status_message(self.statusBar(), f"Найдено статей: {len(articles)}")
+                    
+                elif source == "КиберЛенинка":
+                    # Проверяем доступность сервиса
+                    if not self.cyberleninka_service.check_availability():
+                        show_warning_message(
+                            self,
+                            "КиберЛенинка временно недоступна",
+                            "Сервис КиберЛенинки сейчас недоступен. Попробуйте позже."
+                        )
+                        return
+                    
+                    articles = self.cyberleninka_service.search_articles(search_query)
+                    
+                    if not articles:
+                        show_info_message(
+                            self,
+                            "Нет результатов",
+                            "По вашему запросу ничего не найдено. Попробуйте изменить запрос."
+                        )
+                        return
+                        
+            except Exception as e:
+                logger.error(f"Ошибка при поиске статей: {str(e)}", exc_info=True)
+                show_error_message(
+                    self,
+                    "Ошибка поиска",
+                    f"Произошла ошибка при поиске в {source}: {str(e)}"
+                )
+                return
+                
+            finally:
+                # Включаем элементы управления обратно
+                self.search_tab._set_controls_enabled(True)
+                
+        except Exception as e:
+            logger.error(f"Ошибка при поиске статей: {str(e)}", exc_info=True)
+            show_error_message(
+                self,
+                "Ошибка поиска",
+                "Произошла ошибка при поиске статей. Проверьте подключение к интернету и попробуйте снова."
+            )
             
     def _build_search_query(self, query, search_type, date_filter):
         """Формирует запрос поиска с учетом типа и фильтра даты."""
@@ -522,7 +614,7 @@ class MainWindow(QMainWindow):
     @gui_exception_handler()
     def save_article(self):
         """Сохраняет метаданные выбранной статьи в библиотеку."""
-        article = self.search_tab.results_list.get_selected_article()
+        article = self.search_tab.article_list.get_selected_article()
         if not article:
             set_status_message(self.statusBar(), "Выберите статью для сохранения")
             return
@@ -559,7 +651,7 @@ class MainWindow(QMainWindow):
     @gui_exception_handler()
     def download_article(self):
         """Скачивает PDF версию статьи."""
-        article = self.search_tab.results_list.get_selected_article()
+        article = self.search_tab.article_list.get_selected_article()
         if not article:
             # Если нет выбранной статьи в результатах поиска, проверяем библиотеку
             article = self.library_tab.get_selected_article()
@@ -604,11 +696,32 @@ class MainWindow(QMainWindow):
         ):
             success, message = open_file(file_name)
             if not success:
-                set_status_message(self.statusBar(), message) 
+                set_status_message(self.statusBar(), message)
 
     def _on_source_changed(self, source: str):
-        """Обработчик смены источника поиска."""
-        if source == "КиберЛенинка":
-            self.search_tab.set_search_service(self.cyberleninka_service)
-        else:
-            self.search_tab.set_search_service(self.arxiv_service) 
+        """Обрабатывает изменение источника поиска."""
+        try:
+            logger.info(f"Выбран источник: {source}")
+            
+            if source == "КиберЛенинка":
+                # Проверяем доступность сервиса при переключении
+                if not self.cyberleninka_service.check_availability():
+                    show_warning_message(
+                        self,
+                        "КиберЛенинка временно недоступна",
+                        "Сервис КиберЛенинки сейчас недоступен. Попробуйте позже или выберите другой источник."
+                    )
+                    # Возвращаемся к ArXiv
+                    self.search_tab.set_source("ArXiv")
+                    return
+                    
+            # Очищаем результаты поиска при смене источника
+            self.search_tab.clear_results()
+            
+        except Exception as e:
+            logger.error(f"Ошибка при смене источника: {str(e)}", exc_info=True)
+            show_error_message(
+                self,
+                "Ошибка",
+                "Произошла ошибка при смене источника. Попробуйте перезапустить приложение."
+            ) 

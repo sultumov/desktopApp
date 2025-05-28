@@ -30,11 +30,11 @@
     },
     {
         "id": "http://arxiv.org/abs/hep-th/9510085v2",
-        "title": "Calculation of the Aharonov-Bohm wave function",
+        "title": "Расчет волновой функции Ааронов-Бом",
         "authors": [
             "M. Alvarez"
         ],
-        "abstract": "A calculation of the Aharonov-Bohm wave function is presented. The result is\na series of confluent hypergeometric functions which is finite at the forward\ndirection.",
+        "abstract": "Представлен расчет волновой функции Ааронов-Бом. Результат\nсерия сливающихся гипергеометрических функций, которые конечны на форварде\nнаправление.",
         "year": 1995,
         "doi": "10.1103/PhysRevA.54.1128",
         "url": "http://arxiv.org/pdf/hep-th/9510085v2",
@@ -44,11 +44,11 @@
         "pages": null,
         "keywords": [],
         "full_text": null,
-        "file_path": "storage\\articles\\http://arxiv.org/abs/hep-th/9510085v2.pdf",
+        "file_path": null,
         "categories": [
-            "hep-th"
+            "Hep-й"
         ],
-        "added_date": "2025-05-12 23:35:42.944194",
+        "added_date": "2025-05-28 13:29:37.103067",
         "source": "Unknown",
         "citation_count": 0,
         "reference_count": 0,

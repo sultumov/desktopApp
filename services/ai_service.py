@@ -89,8 +89,8 @@ class AIService:
     def __init__(self):
         """Инициализирует сервис."""
         self.service = os.getenv("AI_SERVICE", "GigaChat")  # По умолчанию используем GigaChat
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.model = os.getenv("MODEL", "GPT-3.5")
+        self.api_key = os.getenv("GIGACHAT_API_KEY")
+        self.model = os.getenv("MODEL", "GigaChat")
         self.language = os.getenv("LANGUAGE", "Русский")
         
         # Инициализируем сервисы

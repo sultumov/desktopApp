@@ -13,6 +13,10 @@ import json
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 import hashlib
+import random
+from requests.exceptions import RequestException
+from urllib3.exceptions import HTTPError
+from socket import timeout
 
 # Настройка логгера
 logger = logging.getLogger(__name__)
@@ -23,13 +27,40 @@ class CyberleninkaService:
     BASE_URL = "https://cyberleninka.ru"
     CACHE_DIR = "cache/cyberleninka"
     CACHE_TIME = 24 * 60 * 60  # 24 часа в секундах
+    MAX_RETRIES = 3  # Максимальное количество попыток
+    RETRY_DELAY = 2  # Базовая задержка между попытками (в секундах)
+    
+    # Список User-Agent для ротации
+    USER_AGENTS = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    ]
     
     def __init__(self):
         """Инициализация сервиса."""
-        logger.info("Инициализация CyberleninkaService")
-        self.session = requests.Session()
+        try:
+            logger.info("Инициализация CyberleninkaService")
+            self.session = requests.Session()
+            self._update_headers()
+            
+            # Создаем директорию для кэша
+            os.makedirs(self.CACHE_DIR, exist_ok=True)
+            
+            # Проверяем доступность сервиса при инициализации
+            if not self.check_availability():
+                logger.warning("Сервис КиберЛенинки недоступен")
+                
+        except Exception as e:
+            logger.error(f"Ошибка при инициализации сервиса: {str(e)}", exc_info=True)
+            # Не выбрасываем исключение, чтобы сервис мог продолжить работу
+        
+    def _update_headers(self):
+        """Обновление заголовков запроса с новым User-Agent."""
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': random.choice(self.USER_AGENTS),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
             'Accept-Encoding': 'gzip, deflate, br',
@@ -46,10 +77,58 @@ class CyberleninkaService:
             'Referer': 'https://cyberleninka.ru/'
         }
         self.session.headers.update(headers)
-        logger.debug(f"Установлены заголовки запросов: {headers}")
+        logger.debug(f"Обновлены заголовки запросов с User-Agent: {headers['User-Agent']}")
         
-        # Создаем директорию для кэша
-        os.makedirs(self.CACHE_DIR, exist_ok=True)
+    def _make_request(self, url: str, method: str = 'get', **kwargs) -> requests.Response:
+        """Выполнение HTTP запроса с обработкой ошибок и повторными попытками.
+        
+        Args:
+            url: URL для запроса
+            method: HTTP метод (get/post)
+            **kwargs: Дополнительные параметры для requests
+            
+        Returns:
+            Response объект
+            
+        Raises:
+            RequestException: При ошибке запроса после всех попыток
+        """
+        last_error = None
+        
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                # Увеличиваем задержку с каждой попыткой
+                delay = self.RETRY_DELAY * (attempt + 1)
+                time.sleep(random.uniform(delay, delay + 1))
+                
+                # Обновляем User-Agent перед запросом
+                self._update_headers()
+                
+                # Выполняем запрос
+                response = getattr(self.session, method)(url, timeout=10, **kwargs)
+                response.raise_for_status()
+                
+                # Проверяем наличие капчи
+                if 'captcha' in response.text.lower():
+                    logger.warning(f"Обнаружена капча (попытка {attempt + 1}/{self.MAX_RETRIES})")
+                    raise RequestException("Требуется ввод капчи")
+                    
+                # Проверяем, что получили HTML-ответ
+                content_type = response.headers.get('content-type', '').lower()
+                if 'text/html' in content_type and len(response.text.strip()) < 100:
+                    logger.warning(f"Получен пустой или слишком короткий ответ (попытка {attempt + 1}/{self.MAX_RETRIES})")
+                    raise RequestException("Получен некорректный ответ")
+                    
+                return response
+                
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Ошибка при выполнении запроса (попытка {attempt + 1}/{self.MAX_RETRIES}): {str(e)}")
+                if attempt < self.MAX_RETRIES - 1:
+                    continue
+                    
+        logger.error(f"Все попытки выполнить запрос к {url} завершились неудачно")
+        raise RequestException(f"Не удалось выполнить запрос после {self.MAX_RETRIES} попыток: {str(last_error)}")
         
     def _get_cache_path(self, key: str) -> Path:
         """Получение пути к файлу кэша.
@@ -228,7 +307,7 @@ class CyberleninkaService:
         
     def search_articles(self, query: str, limit: int = 10, page: int = 1,
                        year_from: Optional[int] = None, year_to: Optional[int] = None,
-                       categories: Optional[List[str]] = None) -> list[Article]:
+                       categories: Optional[List[str]] = None) -> List[Article]:
         """Поиск статей.
         
         Args:
@@ -242,85 +321,64 @@ class CyberleninkaService:
         Returns:
             Список найденных статей
         """
-        logger.info(f"Поиск статей по запросу: {query} (страница {page}, лимит {limit})")
+        try:
+            logger.info(f"Поиск статей по запросу: {query} (страница {page}, лимит {limit})")
         
-        # Проверяем кэш
-        cache_key = f"search_{query}_{limit}_{page}_{year_from}_{year_to}_{categories}"
-        cached_data = self._get_cached_data(cache_key)
-        if cached_data:
-            logger.info("Найдены результаты в кэше")
-            return [Article(**article_data) for article_data in cached_data]
+            # Проверяем доступность сервиса перед поиском
+            if not self.check_availability():
+                logger.error("Сервис КиберЛенинки недоступен")
+                return []
             
-        max_retries = 3
-        retry_delay = 2
-        
-        for attempt in range(max_retries):
-            try:
-                # Формируем URL
-                encoded_query = urllib.parse.quote(query)
-                url = f"{self.BASE_URL}/search?q={encoded_query}&page={page}"
-                
+            # Проверяем кэш
+            cache_key = f"search_{query}_{limit}_{page}_{year_from}_{year_to}_{categories}"
+            cached_data = self._get_cached_data(cache_key)
+            if cached_data:
+                logger.info("Возвращены результаты из кэша")
+                return [Article(**article_data) for article_data in cached_data]
+
+                # Формируем URL для поиска
+                search_url = f"{self.BASE_URL}/search"
+                params = {
+                    'q': query,
+                    'page': page
+                }
+
+                # Добавляем параметры года если указаны
                 if year_from:
-                    url += f"&year_from={year_from}"
+                    params['year_from'] = year_from
                 if year_to:
-                    url += f"&year_to={year_to}"
-                    
-                logger.debug(f"URL запроса: {url}")
-                
-                # Делаем запрос
-                response = self.session.get(url)
-                response.raise_for_status()
-                
-                # Проверяем на наличие капчи
-                if 'captcha' in response.text.lower():
-                    logger.error("Обнаружена капча")
-                    time.sleep(retry_delay * (attempt + 1))
-                    continue
-                    
-                # Парсим HTML
+                    params['year_to'] = year_to
+
+                # Выполняем запрос
+                response = self._make_request(search_url, params=params)
+
+                # Парсим результаты
                 soup = BeautifulSoup(response.text, 'html.parser')
-                
+
                 # Ищем блок с результатами
                 results_block = self._find_results_block(soup)
                 if not results_block:
                     logger.warning("Блок с результатами не найден")
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay * (attempt + 1))
-                        continue
                     return []
-                    
-                # Парсим статьи
-                articles = self._parse_articles(soup, limit, categories)
+
+                    # Парсим статьи
+                articles = self._parse_articles(results_block, limit, categories)
+
+                # Сохраняем в кэш только если нашли результаты
+                if articles:
+                    self._save_to_cache(cache_key, [article.to_dict() for article in articles])
+
+                    return articles
                 
-                # Сохраняем в кэш
-                articles_data = [article.to_dict() for article in articles]
-                self._save_to_cache(cache_key, articles_data)
-                
-                logger.info(f"Найдено {len(articles)} статей")
-                return articles
-                
-            except requests.RequestException as e:
-                logger.error(f"Ошибка запроса: {str(e)}")
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay * (attempt + 1))
-                    continue
-                raise
-                
-            except Exception as e:
-                logger.error(f"Ошибка при поиске: {str(e)}", exc_info=True)
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay * (attempt + 1))
-                    continue
-                raise
-                
-        logger.error("Все попытки поиска завершились неудачно")
-        return []
+        except Exception as e:
+            logger.error(f"Ошибка при поиске статей: {str(e)}", exc_info=True)
+            return []
             
-    def _parse_articles(self, soup: BeautifulSoup, limit: int, categories: Optional[List[str]] = None) -> List[Article]:
+    def _parse_articles(self, container: BeautifulSoup, limit: int, categories: Optional[List[str]] = None) -> List[Article]:
         """Парсинг статей из HTML.
         
         Args:
-            soup: BeautifulSoup объект
+            container: BeautifulSoup объект с контейнером
             limit: Максимальное количество статей
             categories: Список категорий для фильтрации
             
@@ -328,93 +386,69 @@ class CyberleninkaService:
             Список статей
         """
         articles = []
-        results_block = self._find_results_block(soup)
-        if not results_block:
-            return articles
-            
-        # Ищем статьи
-        articles_html = self._find_articles(results_block)
-        logger.info(f"Найдено {len(articles_html)} статей на странице")
+        article_elements = self._find_articles(container)
         
-        for article_html in articles_html[:limit]:
+        for article_elem in article_elements[:limit]:
             try:
-                # Ищем основные элементы статьи
-                title_elem = article_html.find(['h2', 'h3', 'h4', 'a'], class_=lambda x: x and ('title' in x.lower() or 'name' in x.lower()))
-                if not title_elem:
-                    title_elem = article_html.find(['h2', 'h3', 'h4', 'a'])
+                # Извлекаем основную информацию
+                title_elem = article_elem.find(['h2', 'h3', 'h4', '.title', '[itemprop="name"]'])
+                title = title_elem.get_text(strip=True) if title_elem else None
                 
-                if not title_elem:
-                    logger.warning("Не найден заголовок статьи")
+                if not title:
                     continue
                     
-                # Получаем ссылку и ID
-                link = None
-                if title_elem.name == 'a':
-                    link = title_elem.get('href', '')
-                else:
-                    link_elem = title_elem.find('a')
-                    if link_elem:
-                        link = link_elem.get('href', '')
-                    else:
-                        link_elem = article_html.find('a', href=True)
-                        if link_elem:
-                            link = link_elem.get('href', '')
-                            
-                if not link:
-                    logger.warning("Не найдена ссылка на статью")
-                    continue
-                    
-                if not link.startswith('http'):
-                    link = f"{self.BASE_URL}{link}"
-                    
-                article_id = link.split('/')[-1]
-                
-                # Получаем название
-                title = title_elem.get_text(strip=True)
-                
-                # Ищем авторов
+                # Извлекаем авторов
                 authors = []
-                authors_container = article_html.find(['div', 'span'], class_=lambda x: x and 'author' in x.lower())
-                if authors_container:
-                    author_elements = authors_container.find_all(['a', 'span'])
-                    for author_elem in author_elements:
-                        author_name = author_elem.get_text(strip=True)
-                        if author_name and ',' not in author_name and len(author_name.split()) <= 4:
-                            authors.append(author_name)
+                authors_elem = article_elem.find(['[itemprop="author"]', '.authors', '.author'])
+                if authors_elem:
+                    author_names = authors_elem.get_text(strip=True).split(',')
+                    authors = [name.strip() for name in author_names if name.strip()]
+                    
+                # Извлекаем год
+                year = None
+                year_match = re.search(r'\b(19|20)\d{2}\b', article_elem.get_text())
+                if year_match:
+                    year = int(year_match.group())
+                    
+                # Извлекаем URL
+                url = None
+                link_elem = article_elem.find('a', href=True)
+                if link_elem:
+                    url = urllib.parse.urljoin(self.BASE_URL, link_elem['href'])
                             
-                # Ищем аннотацию
-                abstract = ""
-                abstract_elem = article_html.find(['div', 'p'], class_=lambda x: x and ('abstract' in x.lower() or 'description' in x.lower()))
+                # Извлекаем аннотацию
+                abstract = None
+                abstract_elem = article_elem.find(['[itemprop="description"]', '.abstract', '.summary'])
                 if abstract_elem:
                     abstract = abstract_elem.get_text(strip=True)
                     
-                # Ищем год публикации
-                year = None
-                year_elem = article_html.find(['span', 'div'], class_=lambda x: x and ('year' in x.lower() or 'date' in x.lower()))
-                if year_elem:
-                    year_text = year_elem.get_text(strip=True)
-                    year_match = re.search(r'\b(19|20)\d{2}\b', year_text)
-                    if year_match:
-                        year = int(year_match.group())
+                # Извлекаем категории
+                article_categories = []
+                categories_elem = article_elem.find(['[itemprop="about"]', '.categories', '.tags'])
+                if categories_elem:
+                    article_categories = [cat.strip() for cat in categories_elem.get_text(strip=True).split(',')]
                         
                 # Создаем объект статьи
                 article = Article(
-                    id=article_id,
                     title=title,
                     authors=authors,
-                    abstract=abstract,
-                    url=link,
                     year=year,
+                    abstract=abstract,
+                    url=url,
+                    categories=article_categories,
                     source="cyberleninka"
                 )
                 
-                # Проверяем фильтры
+                # Проверяем соответствие фильтрам
                 if self._matches_filters(article, categories):
                     articles.append(article)
                     
             except Exception as e:
-                logger.error(f"Ошибка при парсинге статьи: {str(e)}", exc_info=True)
+                logger.error(f"Ошибка при парсинге статьи: {str(e)}")
                 continue
+                
+            if len(articles) >= limit:
+                break
                 
         return articles
         
@@ -422,16 +456,19 @@ class CyberleninkaService:
         """Проверка соответствия статьи фильтрам.
         
         Args:
-            article: Статья
-            categories: Список категорий
+            article: Объект статьи
+            categories: Список категорий для фильтрации
             
         Returns:
-            True если статья соответствует фильтрам
+            True если статья соответствует фильтрам, False иначе
         """
         if not categories:
             return True
             
-        return any(category.lower() in [c.lower() for c in article.categories] for category in categories)
+        article_categories = set(cat.lower() for cat in article.categories)
+        filter_categories = set(cat.lower() for cat in categories)
+        
+        return bool(article_categories & filter_categories)  # Проверяем пересечение множеств
         
     def get_article_pdf(self, article_id: str) -> Optional[bytes]:
         """Скачивание PDF статьи.
@@ -447,7 +484,7 @@ class CyberleninkaService:
             # Получаем страницу статьи для поиска ссылки на PDF
             article_url = f"{self.BASE_URL}/article/{article_id.replace('cyberleninka_', '')}"
             
-            response = self.session.get(article_url)
+            response = self._make_request(article_url)
             response.raise_for_status()
             response.encoding = 'utf-8'
             
@@ -478,7 +515,7 @@ class CyberleninkaService:
             logger.debug(f"Скачивание PDF по ссылке: {pdf_link}")
             
             # Скачиваем PDF
-            pdf_response = self.session.get(pdf_link)
+            pdf_response = self._make_request(pdf_link)
             pdf_response.raise_for_status()
             
             return pdf_response.content
@@ -500,7 +537,7 @@ class CyberleninkaService:
             search_url = f"{self.BASE_URL}/search"
             params = {'q': query}
             
-            response = self.session.get(search_url, params=params)
+            response = self._make_request(search_url, params=params)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -539,7 +576,7 @@ class CyberleninkaService:
             Список категорий
         """
         try:
-            response = self.session.get(self.BASE_URL)
+            response = self._make_request(self.BASE_URL)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -574,24 +611,23 @@ class CyberleninkaService:
             Полный текст статьи
         """
         logger.info(f"Начало получения текста статьи: {article_id}")
+        
+        # Проверяем кэш
+        cache_key = f"full_text_{article_id}"
+        cached_data = self._get_cached_data(cache_key)
+        if cached_data:
+            logger.info("Возвращен текст из кэша")
+            return cached_data
+        
         try:
             # Извлекаем URL из ID
             article_url = f"{self.BASE_URL}/article/{article_id.replace('cyberleninka_', '')}"
             logger.info(f"Получаем текст статьи: {article_url}")
             
-            # Добавляем задержку перед запросом
-            logger.debug("Ожидание 1 секунда перед запросом...")
-            time.sleep(1)
-            
-            logger.debug("Отправка HTTP GET запроса...")
-            response = self.session.get(article_url)
-            response.raise_for_status()
-            response.encoding = 'utf-8'
-            
-            logger.debug(f"Получен ответ, статус: {response.status_code}, длина: {len(response.text)} байт")
+            # Выполняем запрос
+            response = self._make_request(article_url)
             
             # Парсим HTML
-            logger.debug("Начало парсинга HTML...")
             soup = BeautifulSoup(response.text, 'html.parser')
             
             # Получаем текст статьи
@@ -603,25 +639,59 @@ class CyberleninkaService:
                 '.ocr',
                 '.article-text',
                 '#article-text',
-                '.paper-text'
+                '.paper-text',
+                '[role="main"] article',
+                '.content article'
             ]
             
-            logger.debug(f"Поиск текста статьи по селекторам: {content_selectors}")
+            # Ищем текст по селекторам
             for selector in content_selectors:
-                blocks = soup.select(selector)
-                if blocks:
-                    logger.debug(f"Найден текст по селектору: {selector}")
-                    text_blocks.extend([block.text.strip() for block in blocks])
+                content = soup.select_one(selector)
+                if content:
+                    # Удаляем ненужные элементы
+                    for elem in content.select('script, style, .advertisement, .banner, .share-buttons'):
+                        elem.decompose()
+                    
+                    # Получаем текст, сохраняя структуру
+                    paragraphs = []
+                    for p in content.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                        text = p.get_text(strip=True)
+                        if text and len(text) > 10:  # Игнорируем короткие фрагменты
+                            paragraphs.append(text)
+                    
+                    if paragraphs:
+                        text_blocks.extend(paragraphs)
+                        break
+            
+            if not text_blocks:
+                # Если не нашли текст по селекторам, пробуем найти любой текстовый контент
+                main_content = soup.find('main') or soup.find('article') or soup.find('body')
+                if main_content:
+                    # Удаляем ненужные элементы
+                    for elem in main_content.select('script, style, .advertisement, .banner, .share-buttons, header, footer, nav'):
+                        elem.decompose()
+                    
+                    # Получаем параграфы текста
+                    paragraphs = []
+                    for p in main_content.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                        text = p.get_text(strip=True)
+                        if text and len(text) > 10:
+                            paragraphs.append(text)
+                    
+                    if paragraphs:
+                        text_blocks.extend(paragraphs)
                     
             if not text_blocks:
-                logger.error("Текст статьи не найден")
-                logger.debug(f"Первые 1000 символов HTML: {response.text[:1000]}")
+                logger.warning("Текст статьи не найден")
                 return ""
                 
-            text = "\n\n".join(text_blocks)
-            logger.info(f"Получен текст статьи длиной {len(text)} символов")
+            # Объединяем текст
+            full_text = "\n\n".join(text_blocks)
             
-            return text
+            # Сохраняем в кэш
+            self._save_to_cache(cache_key, full_text)
+            
+            return full_text
             
         except Exception as e:
             logger.error(f"Ошибка при получении текста статьи: {str(e)}", exc_info=True)
@@ -634,20 +704,8 @@ class CyberleninkaService:
             True если сервис доступен, False в противном случае
         """
         try:
-            response = self.session.get(self.BASE_URL, timeout=10)
-            response.raise_for_status()
-            
-            # Проверяем на наличие капчи
-            if 'captcha' in response.text.lower():
-                logger.error("Сервис требует капчу")
-                return False
-                
-            return True
-            
-        except requests.RequestException as e:
-            logger.error(f"Ошибка при проверке доступности сервиса: {str(e)}")
-            return False
-            
+            response = self._make_request(self.BASE_URL)
+            return response.status_code == 200
         except Exception as e:
-            logger.error(f"Неожиданная ошибка при проверке сервиса: {str(e)}", exc_info=True)
+            logger.error(f"Сервис недоступен: {str(e)}")
             return False 

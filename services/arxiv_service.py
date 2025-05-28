@@ -73,12 +73,17 @@ class ArxivService:
             Список найденных статей
         """
         try:
-                # Проверяем кэш при новом поиске
+            if not query or not query.strip():
+                logger.warning("Пустой поисковый запрос")
+                return []
+                
+            # Проверяем кэш при новом поиске
             cached_results = self._get_from_cache(query)
             if cached_results:
                 logger.info("Возвращены результаты из кэша")
                 self.search_results = cached_results
-            return self.search_results[:limit]
+                self.has_more = len(cached_results) >= limit
+                return self.search_results[:limit]
 
             self.current_page = page - 1  # Страницы в arxiv начинаются с 0
             self.current_query = query
@@ -86,9 +91,6 @@ class ArxivService:
             self.has_more = True
             self.page_size = limit
             
-            if not self.has_more:
-                return []
-
             logger.info(f"Поиск статей (страница {self.current_page}): {query}")
             
             # Модифицируем запрос с учетом года
@@ -109,30 +111,40 @@ class ArxivService:
                 category_filter = " OR ".join([f"cat:{cat}" for cat in categories])
                 modified_query = f"{modified_query} AND ({category_filter})"
             
-            # Создаем объект поиска
-            search = arxiv.Search(
-                query=modified_query,
-                max_results=limit,
-                sort_by=arxiv.SortCriterion.Relevance
-            )
-
-            # Получаем результаты
-            new_results = []
             try:
+                # Создаем объект поиска
+                search = arxiv.Search(
+                    query=modified_query,
+                    max_results=limit,
+                    sort_by=arxiv.SortCriterion.Relevance
+                )
+
+                # Получаем результаты
+                new_results = []
                 for result in self.client.results(search):
-                    article = self._convert_result_to_article(result)
-                    new_results.append(article)
-                    if len(new_results) >= limit:
-                        break
+                    try:
+                        article = self._convert_result_to_article(result)
+                        new_results.append(article)
+                        if len(new_results) >= limit:
+                            break
+                    except Exception as e:
+                        logger.error(f"Ошибка при обработке результата: {str(e)}")
+                        continue
+                        
             except StopIteration:
                 self.has_more = False
+                logger.info("Достигнут конец результатов")
+            except Exception as e:
+                logger.error(f"Ошибка при выполнении поискового запроса: {str(e)}")
+                raise
 
             # Если получили меньше результатов, чем размер страницы
             if len(new_results) < limit:
                 self.has_more = False
 
-                self.search_results = new_results
-            # Сохраняем в кэш
+            self.search_results = new_results
+            # Сохраняем в кэш только если есть результаты
+            if new_results:
                 self._add_to_cache(query, new_results)
 
             self.current_page += 1

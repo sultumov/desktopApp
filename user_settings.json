@@ -2,16 +2,16 @@
     "interface": {
         "splitter_sizes": {
             "search_splitter": [
-                145,
-                387
+                129,
+                345
             ],
             "search_results_splitter": [
-                301,
-                756
+                174,
+                460
             ],
             "summary_splitter": [
-                166,
-                308
+                175,
+                325
             ],
             "references_splitter": [
                 154,
@@ -22,8 +22,8 @@
                 405
             ],
             "library_splitter": [
-                269,
-                756
+                162,
+                472
             ]
         },
         "window_size": [
@@ -31,7 +31,7 @@
             800
         ],
         "window_position": [
-            7,
+            14,
             -7
         ],
         "current_tab": 1,

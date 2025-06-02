@@ -1,12 +1,14 @@
 """
 Сервис для работы с локальным хранилищем статей.
 """
-
+import logging
 import os
 import json
-import logging
-from typing import List, Optional
+import shutil
+from datetime import datetime
+from typing import List, Dict, Optional
 from models.article import Article
+from utils import get_user_data_dir, log_exception
 
 logger = logging.getLogger(__name__)
 
@@ -15,88 +17,199 @@ class StorageService:
     
     def __init__(self):
         """Инициализирует сервис."""
-        self.storage_dir = "storage"
-        self.articles_file = os.path.join(self.storage_dir, "articles.json")
-        os.makedirs(self.storage_dir, exist_ok=True)
-        self._load_articles()
-
-    def _load_articles(self):
-        """Загружает статьи из файла."""
+        # Создаем директории для хранения данных
+        self.data_dir = get_user_data_dir()
+        self.articles_dir = os.path.join(self.data_dir, 'articles')
+        self.pdf_dir = os.path.join(self.data_dir, 'pdf')
+        
+        os.makedirs(self.articles_dir, exist_ok=True)
+        os.makedirs(self.pdf_dir, exist_ok=True)
+        
+        # Инициализируем кэш статей
+        self._articles_cache = None
+        
+    def save_article(self, article: Article) -> bool:
+        """Сохраняет статью в хранилище."""
         try:
-            if os.path.exists(self.articles_file):
-                with open(self.articles_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    self.articles = [Article(**article) for article in data]
-            else:
-                self.articles = []
-        except Exception as e:
-            logger.error(f"Ошибка при загрузке статей: {str(e)}")
-            self.articles = []
-
-    def _save_articles(self):
-        """Сохраняет статьи в файл."""
-        try:
-            with open(self.articles_file, 'w', encoding='utf-8') as f:
-                data = [article.__dict__ for article in self.articles]
-                json.dump(data, f, ensure_ascii=False, indent=4, default=str)
-        except Exception as e:
-            logger.error(f"Ошибка при сохранении статей: {str(e)}")
-            raise
-
-    def get_articles(self) -> List[Article]:
-        """Возвращает список всех статей."""
-        return self.articles
-
-    def get_article(self, article_id: str) -> Optional[Article]:
-        """Возвращает статью по ID."""
-        try:
-            for article in self.articles:
-                if article.id == article_id:
-                    return article
-            return None
-        except Exception as e:
-            logger.error(f"Ошибка при получении статьи: {str(e)}")
-            raise
-
-    def add_article(self, article: Article, file_path: str = None):
-        """Добавляет статью в хранилище."""
-        try:
-            # Обновляем путь к файлу, если он предоставлен
-            if file_path:
-                article.file_path = file_path
+            # Создаем уникальный идентификатор для статьи
+            article_id = article.id or str(datetime.now().timestamp())
+            
+            # Сохраняем метаданные
+            metadata = {
+                'id': article_id,
+                'title': article.title,
+                'authors': article.authors,
+                'abstract': article.abstract,
+                'published': article.published.isoformat() if article.published else None,
+                'doi': article.doi,
+                'url': article.url,
+                'categories': article.categories,
+                'source': article.source,
+                'local_pdf_path': article.local_pdf_path if hasattr(article, 'local_pdf_path') else None
+            }
+            
+            # Путь к файлу метаданных
+            metadata_path = os.path.join(self.articles_dir, f"{article_id}.json")
+            
+            # Сохраняем метаданные
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
                 
-            # Проверяем, нет ли уже такой статьи
-            if not self.get_article(article.id):
-                self.articles.append(article)
-                self._save_articles()
-            else:
-                # Обновляем существующую статью
-                for i, a in enumerate(self.articles):
-                    if a.id == article.id:
-                        self.articles[i] = article
-                        self._save_articles()
-                        break
+            # Если есть PDF, копируем его в хранилище
+            if hasattr(article, 'local_pdf_path') and article.local_pdf_path:
+                if os.path.exists(article.local_pdf_path):
+                    pdf_filename = os.path.basename(article.local_pdf_path)
+                    new_pdf_path = os.path.join(self.pdf_dir, f"{article_id}_{pdf_filename}")
+                    shutil.copy2(article.local_pdf_path, new_pdf_path)
+                    
+                    # Обновляем путь к PDF в метаданных
+                    metadata['local_pdf_path'] = new_pdf_path
+                    with open(metadata_path, 'w', encoding='utf-8') as f:
+                        json.dump(metadata, f, ensure_ascii=False, indent=2)
+            
+            # Сбрасываем кэш
+            self._articles_cache = None
+                        
+            return True
+            
         except Exception as e:
-            logger.error(f"Ошибка при добавлении статьи: {str(e)}")
-            raise
-
-    def delete_article(self, article_id: str):
+            log_exception(f"Ошибка при сохранении статьи: {str(e)}")
+            return False
+            
+    def get_articles(self) -> List[Article]:
+        """Возвращает список всех сохраненных статей."""
+        try:
+            # Используем кэш если есть
+            if self._articles_cache is not None:
+                return self._articles_cache
+                
+            articles = []
+            
+            # Получаем список файлов метаданных
+            metadata_files = [f for f in os.listdir(self.articles_dir) if f.endswith('.json')]
+            
+            for metadata_file in metadata_files:
+                try:
+                    # Читаем метаданные
+                    with open(os.path.join(self.articles_dir, metadata_file), 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                        
+                    # Создаем объект статьи
+                    article = Article(
+                        id=metadata.get('id'),
+                        title=metadata.get('title'),
+                        year=datetime.fromisoformat(metadata['published']).year if metadata.get('published') else None,
+                        authors=metadata.get('authors', []),
+                        abstract=metadata.get('abstract'),
+                        published=datetime.fromisoformat(metadata['published']) if metadata.get('published') else None,
+                        doi=metadata.get('doi'),
+                        url=metadata.get('url'),
+                        categories=metadata.get('categories', []),
+                        source=metadata.get('source')
+                    )
+                    
+                    # Добавляем путь к PDF если есть
+                    if metadata.get('local_pdf_path'):
+                        if os.path.exists(metadata['local_pdf_path']):
+                            article.local_pdf_path = metadata['local_pdf_path']
+                            
+                    articles.append(article)
+                    
+                except Exception as e:
+                    log_exception(f"Ошибка при чтении метаданных статьи {metadata_file}: {str(e)}")
+                    continue
+            
+            # Сохраняем в кэш
+            self._articles_cache = articles
+                    
+            return articles
+            
+        except Exception as e:
+            log_exception(f"Ошибка при получении списка статей: {str(e)}")
+            return []
+            
+    def delete_article(self, article_id: str) -> bool:
         """Удаляет статью из хранилища."""
         try:
-            self.articles = [a for a in self.articles if a.id != article_id]
-            self._save_articles()
+            # Путь к файлу метаданных
+            metadata_path = os.path.join(self.articles_dir, f"{article_id}.json")
+            
+            # Проверяем существование файла
+            if not os.path.exists(metadata_path):
+                return False
+                
+            # Читаем метаданные чтобы получить путь к PDF
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+                
+            # Удаляем PDF если есть
+            if metadata.get('local_pdf_path'):
+                if os.path.exists(metadata['local_pdf_path']):
+                    os.remove(metadata['local_pdf_path'])
+                    
+            # Удаляем метаданные
+            os.remove(metadata_path)
+            
+            # Сбрасываем кэш
+            self._articles_cache = None
+            
+            return True
+            
         except Exception as e:
-            logger.error(f"Ошибка при удалении статьи: {str(e)}")
-            raise
-
-    def update_article(self, article: Article):
+            log_exception(f"Ошибка при удалении статьи: {str(e)}")
+            return False
+            
+    def get_article(self, article_id: str) -> Optional[Article]:
+        """Возвращает статью по идентификатору."""
+        try:
+            # Путь к файлу метаданных
+            metadata_path = os.path.join(self.articles_dir, f"{article_id}.json")
+            
+            # Проверяем существование файла
+            if not os.path.exists(metadata_path):
+                return None
+                
+            # Читаем метаданные
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+                
+            # Создаем объект статьи
+            article = Article(
+                id=metadata.get('id'),
+                title=metadata.get('title'),
+                year=datetime.fromisoformat(metadata['published']).year if metadata.get('published') else None,
+                authors=metadata.get('authors', []),
+                abstract=metadata.get('abstract'),
+                published=datetime.fromisoformat(metadata['published']) if metadata.get('published') else None,
+                doi=metadata.get('doi'),
+                url=metadata.get('url'),
+                categories=metadata.get('categories', []),
+                source=metadata.get('source')
+            )
+            
+            # Добавляем путь к PDF если есть
+            if metadata.get('local_pdf_path'):
+                if os.path.exists(metadata['local_pdf_path']):
+                    article.local_pdf_path = metadata['local_pdf_path']
+                    
+            return article
+            
+        except Exception as e:
+            log_exception(f"Ошибка при получении статьи: {str(e)}")
+            return None
+            
+    def update_article(self, article: Article) -> bool:
         """Обновляет статью в хранилище."""
         try:
-            for i, a in enumerate(self.articles):
-                if a.id == article.id:
-                    self.articles[i] = article
-                    self._save_articles()
-                    return
+            if not article.id:
+                return False
+                
+            # Удаляем старую версию
+            self.delete_article(article.id)
+            
+            # Сохраняем новую версию
+            return self.save_article(article)
+            
         except Exception as e:
-            logger.error(f"Ошибка при обновлении статьи: {str(e)}")
-            raise 
+            log_exception(f"Ошибка при обновлении статьи: {str(e)}")
+            return False 

@@ -7,7 +7,7 @@ import re
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QToolBar,
     QToolButton, QTabWidget, QApplication, QDialog, 
-    QMessageBox, QFileDialog
+    QMessageBox, QFileDialog, QProgressDialog
 )
 from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QIcon
@@ -433,20 +433,73 @@ class MainWindow(QMainWindow):
             
     # Методы для работы с кратким содержанием
     @gui_exception_handler()
-    def create_summary(self):
-        """Создает краткое содержание для выбранной статьи."""
-        article = self.search_tab.results_list.get_selected_article()
-        if not article:
-            set_status_message(self.statusBar(), "Выберите статью для создания краткого содержания")
-            return
-            
-        set_status_message(self.statusBar(), "Создание краткого содержания с помощью GigaChat...")
+    def create_summary(self, article=None):
+        """Создает краткое содержание статьи.
         
-        # Используем GigaChat для создания краткого содержания
-        summary = self.ai_service.create_summary(article)
-        self.summary_tab.set_summary(summary, article.title)
-        self.tab_widget.setCurrentIndex(1)  # Переключаемся на вкладку с кратким содержанием
-        set_status_message(self.statusBar(), "Краткое содержание создано")
+        Args:
+            article: Объект статьи (опционально)
+        """
+        try:
+            # Если статья не передана, берем текущую
+            if not article:
+                article = self.summary_tab.current_article
+                
+            if not article:
+                show_warning_message(
+                    self,
+                    "Выберите статью",
+                    "Пожалуйста, выберите статью для создания краткого содержания."
+                )
+                return
+                
+            # Проверяем наличие PDF
+            if not hasattr(article, 'local_pdf_path') or not article.local_pdf_path:
+                show_warning_message(
+                    self,
+                    "PDF не найден",
+                    "Для создания краткого содержания необходим PDF файл статьи."
+                )
+                return
+                
+            # Открываем диалог настроек
+            from ui.tabs.summary_tab import SummarySettingsDialog
+            settings_dialog = SummarySettingsDialog(self)
+            if settings_dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+                
+            settings = settings_dialog.get_settings()
+            
+            # Показываем прогресс
+            progress = QProgressDialog(
+                "Создание краткого содержания...",
+                "Отмена",
+                0, 100,
+                self
+            )
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setAutoClose(True)
+            progress.setMinimumDuration(0)
+            
+            def update_progress():
+                """Обновляет прогресс."""
+                progress.setValue(progress.value() + 1)
+                if progress.value() >= 100:
+                    progress.close()
+                    
+            # Создаем краткое содержание
+            summary = self.ai_service.create_summary(
+                article.local_pdf_path,
+                style=settings['style'],
+                length=settings['length']
+            )
+            
+            # Отображаем результат
+            self.summary_tab.set_summary(summary, article.title)
+            self.statusBar().showMessage("Краткое содержание создано")
+            
+        except Exception as e:
+            logger.error(f"Ошибка при создании краткого содержания: {str(e)}", exc_info=True)
+            self.statusBar().showMessage("Ошибка при создании краткого содержания")
             
     @gui_exception_handler()
     def copy_summary(self):
@@ -469,47 +522,60 @@ class MainWindow(QMainWindow):
     # Методы для работы с источниками
     @gui_exception_handler()
     def find_references(self, article=None):
-        """Ищет источники для выбранной статьи.
+        """Находит источники в статье.
         
         Args:
-            article: Объект статьи (опционально). Если не указан, берется выбранная статья.
+            article: Объект статьи (опционально)
         """
-        if article is None:
-            article = self.search_tab.results_list.get_selected_article()
-            
-        if not article:
-            set_status_message(self.statusBar(), "Выберите статью для поиска источников")
-            return
-            
-        set_status_message(self.statusBar(), "Поиск источников и анализ текста статьи с помощью GigaChat...")
-        
         try:
-            # Используем ai_service для поиска источников через GigaChat
-            references = self.ai_service.find_references(article)
-            
-            if not references:
-                set_status_message(self.statusBar(), "Не удалось найти источники для данной статьи")
+            # Если статья не передана, берем текущую
+            if not article:
+                article = self.references_tab.current_article
+                
+            if not article:
+                show_warning_message(
+                    self,
+                    "Выберите статью",
+                    "Пожалуйста, выберите статью для поиска источников."
+                )
                 return
                 
-            self.tab_widget.setCurrentIndex(2)  # Переключаемся на вкладку с источниками
-            self.references_tab.clear_references()
-
-                # Добавляем найденные источники в список
-            for ref in references:
-                self.references_tab.add_reference(ref)
+            # Проверяем наличие PDF
+            if not hasattr(article, 'local_pdf_path') or not article.local_pdf_path:
+                show_warning_message(
+                    self,
+                    "PDF не найден",
+                    "Для поиска источников необходим PDF файл статьи."
+                )
+                return
+                
+            # Показываем прогресс
+            progress = QProgressDialog(
+                "Поиск источников...",
+                "Отмена",
+                0, 100,
+                self
+            )
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setAutoClose(True)
+            progress.setMinimumDuration(0)
             
-            set_status_message(self.statusBar(), f"Найдено источников: {len(references)}")
+            def update_progress():
+                """Обновляет прогресс."""
+                progress.setValue(progress.value() + 1)
+                if progress.value() >= 100:
+                    progress.close()
+                    
+            # Ищем источники
+            references = self.ai_service.find_references(article.local_pdf_path)
+            
+            # Отображаем результат
+            self.references_tab.set_references(references, article.title)
+            self.statusBar().showMessage("Источники найдены")
             
         except Exception as e:
             logger.error(f"Ошибка при поиске источников: {str(e)}", exc_info=True)
-            set_status_message(self.statusBar(), f"Ошибка при поиске источников: {str(e)}")
-            
-            # Добавляем информацию о проблеме на вкладку с источниками
-            self.tab_widget.setCurrentIndex(2)  # Переключаемся на вкладку с источниками
-            self.references_tab.clear_references()
-            self.references_tab.add_reference("Не удалось найти источники для данной статьи")
-            self.references_tab.add_reference(f"Причина: {str(e)}")
-            self.references_tab.add_reference("Убедитесь, что у вас правильно настроен API ключ GigaChat в настройках")
+            self.statusBar().showMessage("Ошибка при поиске источников")
             
     @gui_exception_handler()
     def copy_references(self):
@@ -542,26 +608,31 @@ class MainWindow(QMainWindow):
     @gui_exception_handler()
     def load_library_articles(self):
         """Загружает статьи из библиотеки."""
-        # Очищаем текущий список
-        self.library_tab.clear_library()
-        
-        # Получаем статьи из хранилища
-        articles = self.storage_service.get_articles()
-        
-        # Выводим отладочную информацию
-        logger.info(f"Загружаем статьи из хранилища. Всего статей: {len(articles)}")
-        
-        # Если статей нет, показываем сообщение
-        if not articles:
-            logger.warning("Библиотека пуста - статьи не найдены")
-            set_status_message(self.statusBar(), "Библиотека пуста")
-            return
+        try:
+            # Очищаем список
+            self.library_tab.clear_library()
             
-        # Добавляем статьи в список
-        for article in articles:
-            self.library_tab.add_library_article(article)
+            # Получаем статьи из хранилища
+            articles = self.storage_service.get_articles()
             
-        set_status_message(self.statusBar(), f"Загружено статей: {len(articles)}")
+            # Добавляем статьи в список
+            for article in articles:
+                self.library_tab.add_library_article(article)
+                
+            # Обновляем списки в других вкладках
+            self.summary_tab.local_articles_list.clear_list()
+            self.references_tab.local_articles_list.clear_list()
+            
+            for article in articles:
+                self.summary_tab.local_articles_list.add_article(article)
+                self.references_tab.local_articles_list.add_article(article)
+                
+            # Обновляем статус
+            self.statusBar().showMessage(f"Загружено статей: {len(articles)}")
+            
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке статей: {str(e)}", exc_info=True)
+            self.statusBar().showMessage("Ошибка при загрузке статей")
             
     @gui_exception_handler()
     def filter_library(self, filter_text):

@@ -4,16 +4,17 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QMessageBox,
     QPushButton, QHBoxLayout, QFileDialog,
     QProgressDialog, QDialog, QComboBox,
-    QSpinBox, QDialogButtonBox
+    QSpinBox, QDialogButtonBox, QLineEdit
 )
 from PyQt6.QtCore import Qt, QMimeData, QTimer
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QIcon
 from PyQt6.QtPdf import QPdfDocument
 from PyQt6.QtPdfWidgets import QPdfView
 
 from ..custom_widgets import CustomSplitter, CollapsiblePanel
 from ..components.article_details import ArticleDetails
 from ..components.action_buttons import ActionButtons
+from ..components.article_list import ArticleList
 from models.article import Article
 from PyPDF2 import PdfReader
 import os
@@ -142,6 +143,21 @@ class SummaryTab(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(16)
 
+        # Создаем горизонтальный разделитель для списка и содержимого
+        self.main_splitter = CustomSplitter(Qt.Orientation.Horizontal, "summary_main_splitter")
+        
+        # Панель со списком локальных статей
+        list_panel = self._create_list_panel()
+        list_collapsible = CollapsiblePanel("Локальные статьи")
+        list_collapsible.set_content(list_panel)
+        self.main_splitter.addWidget(list_collapsible)
+        
+        # Панель с содержимым
+        content_panel = QWidget()
+        content_layout = QVBoxLayout(content_panel)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(16)
+
         # Создаем разделитель для верхней и нижней части
         self.summary_splitter = CustomSplitter(Qt.Orientation.Vertical, "summary_splitter")
         if hasattr(self.parent, 'splitter_sizes_changed'):
@@ -168,15 +184,147 @@ class SummaryTab(QWidget):
         content_collapsible.set_content(bottom_panel)
         self.summary_splitter.addWidget(content_collapsible)
         
-        # Установка пропорций разделителя
+        content_layout.addWidget(self.summary_splitter)
+        
+        # Добавляем панель с содержимым в главный разделитель
+        self.main_splitter.addWidget(content_panel)
+        
+        # Установка пропорций разделителей
         if saved_sizes:
             self.summary_splitter.setSizes(saved_sizes)
         else:
+            self.main_splitter.setStretchFactor(0, 1)  # Список
+            self.main_splitter.setStretchFactor(1, 3)  # Содержимое
             self.summary_splitter.setStretchFactor(0, 1)  # Заголовок
             self.summary_splitter.setStretchFactor(1, 3)  # Содержание
 
-        layout.addWidget(self.summary_splitter)
+        layout.addWidget(self.main_splitter)
         
+    def _create_list_panel(self):
+        """Создает панель со списком локальных статей."""
+        list_panel = QWidget()
+        list_layout = QVBoxLayout(list_panel)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(8)
+
+        # Поле поиска
+        search_container = QWidget()
+        search_container.setFixedHeight(40)
+        search_container.setStyleSheet("""
+            QWidget {
+                background: #F5F5F5;
+                border: 1px solid #E0E0E0;
+                border-radius: 8px;
+            }
+            QWidget:focus-within {
+                border: 1px solid #2196F3;
+                background: white;
+            }
+        """)
+        container_layout = QHBoxLayout(search_container)
+        container_layout.setContentsMargins(12, 0, 12, 0)
+        container_layout.setSpacing(8)
+
+        # Иконка поиска
+        search_icon = QLabel()
+        search_icon.setPixmap(QIcon("ui/icons/search-tab.svg").pixmap(16, 16))
+        search_icon.setStyleSheet("border: none; background: transparent; padding: 0; margin: 0;")
+        container_layout.addWidget(search_icon)
+
+        # Поле поиска
+        self.local_search = QLineEdit()
+        self.local_search.setPlaceholderText("Поиск в локальных статьях...")
+        self.local_search.textChanged.connect(self._filter_local_articles)
+        self.local_search.setStyleSheet("""
+            QLineEdit {
+                border: none;
+                background: #F5F5F5;
+                font-size: 14px;
+                padding: 8px;
+                color: #333333;
+            }
+            QLineEdit:focus {
+                background: white;
+            }
+        """)
+        container_layout.addWidget(self.local_search)
+
+        list_layout.addWidget(search_container)
+
+        # Список статей
+        self.local_articles_list = ArticleList()
+        self.local_articles_list.article_selected.connect(self._on_local_article_selected)
+        list_layout.addWidget(self.local_articles_list)
+
+        # Кнопка обновления
+        refresh_button = QPushButton("Обновить список")
+        refresh_button.clicked.connect(self._refresh_local_articles)
+        refresh_button.setStyleSheet("""
+            QPushButton {
+                background: #2196F3;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background: #1976D2;
+            }
+            QPushButton:pressed {
+                background: #0D47A1;
+            }
+        """)
+        list_layout.addWidget(refresh_button)
+        
+        return list_panel
+        
+    def _filter_local_articles(self):
+        """Фильтрует список локальных статей."""
+        self.local_articles_list.filter_articles(self.local_search.text())
+        
+    def _refresh_local_articles(self):
+        """Обновляет список локальных статей."""
+        try:
+            # Очищаем список
+            self.local_articles_list.clear_list()
+            
+            # Получаем список статей из сервиса
+            if hasattr(self.parent, 'arxiv_service'):
+                articles = self.parent.arxiv_service.get_local_articles()
+                
+                # Добавляем статьи в список
+                for article in articles:
+                    self.local_articles_list.add_article(article)
+                    
+                if hasattr(self.parent, 'statusBar'):
+                    self.parent.statusBar().showMessage(f"Найдено локальных статей: {len(articles)}")
+            
+        except Exception as e:
+            if hasattr(self.parent, 'statusBar'):
+                self.parent.statusBar().showMessage(f"Ошибка при обновлении списка: {str(e)}")
+                
+    def _on_local_article_selected(self, article):
+        """Обрабатывает выбор локальной статьи."""
+        try:
+            if not article:
+                return
+                
+            # Сохраняем текущую статью
+            self.current_article = article
+            
+            # Если есть локальный путь к PDF, используем его
+            if hasattr(article, 'local_pdf_path') and article.local_pdf_path:
+                self.current_pdf_path = article.local_pdf_path
+                
+                # Создаем краткое содержание
+                if hasattr(self.parent, 'create_summary'):
+                    self.parent.create_summary()
+                    
+        except Exception as e:
+            if hasattr(self.parent, 'statusBar'):
+                self.parent.statusBar().showMessage(f"Ошибка при выборе статьи: {str(e)}")
+
     def _create_info_panel(self):
         """Создает информационную панель."""
         top_panel = QWidget()

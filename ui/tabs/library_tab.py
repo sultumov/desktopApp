@@ -186,9 +186,26 @@ class LibraryTab(QWidget):
             
     def _show_library_article(self, article):
         """Отображает информацию о выбранной статье."""
-        self.library_details.display_article(article)
-        if hasattr(self.parent, 'statusBar'):
-            self.parent.statusBar().showMessage(f"Выбрана статья: {article.title}")
+        try:
+            if not article:
+                self.library_details.clear_details()
+                if hasattr(self.parent, 'statusBar'):
+                    self.parent.statusBar().showMessage("Статья не выбрана")
+                return
+                
+            self.library_details.display_article(article)
+            
+            if hasattr(self.parent, 'statusBar'):
+                title = getattr(article, 'title', 'Без названия')
+                self.parent.statusBar().showMessage(f"Выбрана статья: {title}")
+                
+        except Exception as e:
+            if hasattr(self.parent, 'statusBar'):
+                self.parent.statusBar().showMessage(f"Ошибка при отображении статьи: {str(e)}")
+            
+            # Показываем ошибку в деталях
+            error_text = f"Произошла ошибка при отображении статьи:\n{str(e)}"
+            self.library_details.display_text(error_text, "Ошибка")
             
     def _delete_from_library(self):
         """Удаляет статью из библиотеки."""

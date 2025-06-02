@@ -74,6 +74,8 @@ import random
 import re
 from dotenv import load_dotenv
 from openai import OpenAI
+import pdfplumber
+from utils import log_exception
 
 from models.article import Article, Author
 from .gigachat_service import GigaChatService
@@ -101,253 +103,290 @@ class AIService:
         logger.info(f"Model: {self.model}")
         logger.info(f"Language: {self.language}")
         
-    def create_summary(self, article: Article, style: str = "Краткий обзор", max_length: int = 500) -> str:
-        """Создает краткое содержание статьи с помощью GigaChat.
+    def create_summary(
+        self,
+        pdf_path: str,
+        style: str = "Академический",
+        length: int = 500
+    ) -> str:
+        """Создает краткое содержание статьи.
         
         Args:
-            article: Объект статьи
+            pdf_path: Путь к PDF файлу
             style: Стиль краткого содержания
-            max_length: Максимальная длина краткого содержания в словах
-            
-        Returns:
-            Краткое содержание статьи
-        """
-        try:
-            # Используем только GigaChat для создания кратких содержаний
-            if self.gigachat_service:
-                logger.info("Используем GigaChat для создания краткого содержания")
-                return self.gigachat_service.create_summary(article, style, max_length)
-            else:
-                logger.warning("GigaChat не настроен, используем заглушку")
-                return self._generate_mock_summary(article.abstract or article.summary)
-        except Exception as e:
-            logger.error(f"Ошибка при создании краткого содержания: {str(e)}")
-            return self._generate_mock_summary(article.abstract or article.summary)
-            
-    def _generate_advanced_mock_summary_for_article(self, article: Article) -> str:
-        """
-        Генерирует расширенное демонстрационное резюме для статьи без использования AI API.
-        
-        Args:
-            article (Article): Объект статьи
-            
-        Returns:
-            str: Сгенерированное резюме
-        """
-        # Используем имеющуюся заглушку, но с форматированием в Markdown
-        title = article.title
-        categories = article.categories if article.categories else ["наука"]
-        abstract = article.abstract or article.summary or "Аннотация отсутствует"
-        
-        # Извлекаем ключевые слова из аннотации
-        abstract_words = [word for word in re.findall(r'\b\w+\b', abstract.lower()) 
-                         if len(word) > 3 and word not in ["этот", "того", "этого", "такой", "такая", "также", "быть", "этом", "между"]]
-        key_terms = list(set(abstract_words))[:5]  # Берем до 5 уникальных слов
-        
-        # Формируем структурированное содержание
-        summary = "# Краткое содержание статьи\n\n"
-        
-        # Введение и цель
-        summary += "## Проблема и цель исследования\n\n"
-        summary += f"Данная статья «**{title}**» посвящена исследованию в области {', '.join(categories)}. "
-        summary += f"Работа направлена на решение проблем, связанных с {key_terms[0] if key_terms else 'исследуемой областью'}. "
-        summary += f"Основная цель — {random.choice(['разработка новых методов', 'анализ существующих подходов', 'создание эффективного решения'])} "
-        summary += f"для {key_terms[1] if len(key_terms) > 1 else 'данной области исследования'}.\n\n"
-        
-        # Методология
-        summary += "## Методология\n\n"
-        summary += "В исследовании применяются следующие методы:\n\n"
-        summary += "- Анализ существующей литературы и подходов\n"
-        summary += f"- Экспериментальное исследование {key_terms[2] if len(key_terms) > 2 else 'параметров'}\n"
-        summary += "- Статистическая обработка полученных данных\n"
-        summary += f"- Сравнительный анализ с существующими решениями в области {categories[0] if categories else 'науки'}\n\n"
-        
-        # Результаты
-        summary += "## Результаты\n\n"
-        summary += "Исследование показало следующие результаты:\n\n"
-        summary += f"1. Выявлены основные факторы, влияющие на {key_terms[0] if key_terms else 'исследуемый процесс'}\n"
-        summary += f"2. Предложен новый подход к {key_terms[1] if len(key_terms) > 1 else 'решению проблемы'}\n"
-        summary += f"3. Экспериментально подтверждена эффективность предложенного метода\n"
-        summary += f"4. Определены ограничения и области применения разработанного подхода\n\n"
-        
-        # Выводы
-        summary += "## Выводы и значимость\n\n"
-        summary += f"Данное исследование вносит значительный вклад в понимание {key_terms[0] if key_terms else 'рассматриваемых процессов'}. "
-        summary += f"Предложенный подход может быть применен в {random.choice(['промышленности', 'дальнейших исследованиях', 'смежных областях'])}. "
-        summary += "Результаты открывают новые перспективы для развития данного направления науки."
-        
-        return summary
-        
-    def _generate_simple_mock_summary_for_article(self, article: Article) -> str:
-        """
-        Генерирует простое демонстрационное резюме для статьи при возникновении ошибок.
-        
-        Args:
-            article (Article): Объект статьи
-            
-        Returns:
-            str: Простое сгенерированное резюме
-        """
-        title = article.title
-        categories = ', '.join(article.categories) if article.categories else "не указаны"
-        
-        return f"""# Краткое содержание статьи
-
-## О статье
-
-Название: **{title}**
-Категории: {categories}
-
-## Основные положения
-
-- Статья посвящена исследованию в указанной области
-- Рассматриваются ключевые аспекты и методы анализа данных
-- Предлагается подход к решению проблемы
-
-## Выводы
-
-Для получения более детального содержания необходимо проанализировать полный текст статьи.
-"""
-
-    def find_references(self, article: Article) -> List[str]:
-        """Ищет источники для статьи.
-        
-        Args:
-            article: Объект статьи
-            
-        Returns:
-            Список найденных источников
-        """
-        try:
-            # Приводим строку к нижнему регистру для сравнения
-            service_lower = self.service.lower()
-            
-            # Пытаемся получить текст статьи или хотя бы аннотацию
-            article_text = article.abstract or article.summary
-            
-            # Если у нас есть доступ к ArxivService, попробуем получить полный текст
-            try:
-                from services import ArxivService
-                arxiv_service = ArxivService()
-                # Попытка получить полный текст статьи
-                if article.id and article.id.startswith("http"):
-                    logger.info(f"Пытаемся получить полный текст статьи: {article.title}")
-                    full_text = arxiv_service.get_article_text(article)
-                    if full_text and len(full_text) > 100 and "Не удалось" not in full_text:
-                        article_text = full_text
-                        logger.info(f"Получен полный текст статьи ({len(full_text)} символов)")
-                    else:
-                        logger.warning("Не удалось получить полный текст, используем аннотацию")
-            except Exception as e:
-                logger.warning(f"Ошибка при получении текста статьи: {str(e)}")
-            
-            if service_lower == "gigachat" and self.gigachat_service:
-                logger.info("Используем GigaChat для поиска источников")
-                return self.gigachat_service.find_references(article, article_text)
-            elif service_lower == "openai" and self.api_key:
-                logger.info("Используем OpenAI для поиска источников")
-                logger.info(f"Поиск источников для статьи: {article.title}")
-                
-                # Подготавливаем данные о статье
-                article_info = f"""Название: {article.title}
-Авторы: {', '.join(article.authors)}
-Аннотация: {article.abstract or article.summary}
-Категории: {', '.join(article.categories)}
-Год: {article.year}
-"""
-
-                if article_text and len(article_text) > 200:
-                    # Ограничиваем размер текста для запроса
-                    max_text_length = 3000
-                    truncated_text = article_text[:max_text_length] + "..." if len(article_text) > max_text_length else article_text
-                    article_info += f"\nФрагмент текста статьи:\n{truncated_text}"
-                
-                # Настраиваем клиента OpenAI
-                os.environ["OPENAI_API_KEY"] = self.api_key
-                client = OpenAI()
-                
-                # Запрос к API
-                response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "Ты - научный ассистент, который предлагает возможные источники и ссылки для научных статей."},
-                        {"role": "user", "content": f"На основе информации о научной статье, предложи 5-7 вероятных источников, которые могут быть цитированы в ней. Формат: автор, название, год. Статья:\n{article_info}"}
-                    ],
-                    max_tokens=1000,
-                    temperature=0.7,
-                )
-                
-                text_response = response.choices[0].message.content
-                # Разбиваем ответ на строки и очищаем
-                references = [line.strip() for line in text_response.split('\n') 
-                             if line.strip() and not line.strip().startswith('#')]
-                
-                # Если нет результатов, возвращаем заглушку
-                if not references:
-                    return [
-                        "Smith, J. et al. (2021). Recent advances in the field.",
-                        "Johnson, M. & Williams, K. (2020). Theoretical foundations.",
-                        "Rodriguez, A. (2019). Empirical evidence in related work."
-                    ]
-                    
-                return references
-            elif service_lower == "huggingface":
-                # Используем заглушку для Hugging Face
-                logger.info("Использование заглушки для Hugging Face")
-                return [
-                    f"Smith, J. & Jones, M. (2021). Advances in {article.categories[0] if article.categories else 'Science'}.",
-                    f"Johnson, M. & Williams, K. (2020). Theoretical foundations of {article.title.split()[0] if article.title else 'Research'}.",
-                    f"Rodriguez, A. (2019). Empirical evidence in {article.categories[-1] if article.categories else 'related work'}.",
-                    f"Chen, L. et al. (2022). Recent developments in {article.title.split()[-1] if article.title else 'the field'}.",
-                    f"Kumar, R. & Singh, V. (2018). A review of methods for {article.categories[0] if article.categories else 'analysis'}."
-                ]
-            else:
-                # Если API ключ не настроен, возвращаем заглушку
-                return [
-                    "Smith, J. et al. (2021). Recent advances in the field.",
-                    "Johnson, M. & Williams, K. (2020). Theoretical foundations.",
-                    "Rodriguez, A. (2019). Empirical evidence in related work."
-                ]
-        except Exception as e:
-            logger.error(f"Ошибка при поиске источников: {str(e)}")
-            raise
-        
-    def generate_summary(self, text, max_length=1500):
-        """
-        Генерирует краткое содержание статьи.
-        
-        Args:
-            text (str): Текст статьи
-            max_length (int): Максимальная длина резюме
+            length: Максимальная длина краткого содержания
             
         Returns:
             str: Краткое содержание статьи
         """
         try:
-            # Ограничиваем длину входного текста
-            if len(text) > 15000:
-                text = text[:15000] + "..."
+            # Извлекаем текст из PDF
+            text = self._extract_text_from_pdf(pdf_path)
             
-            # Приводим строку к нижнему регистру для сравнения, не зависящего от регистра
-            service_lower = self.service.lower()
+            # Очищаем текст
+            text = self._clean_text(text)
             
-            if service_lower == "gigachat" and self.gigachat_service:
-                logger.info("Используем GigaChat для генерации краткого содержания")
-                return self.gigachat_service.generate_summary(text, max_length)
-            elif service_lower == "openai" and self.api_key:
-                return self._generate_summary_openai(text, max_length)
-            elif service_lower == "huggingface":
-                try:
-                    return self._generate_summary_huggingface(text, max_length)
-                except Exception as e:
-                    logger.error(f"Ошибка при использовании Hugging Face: {str(e)}")
-                    return self._generate_mock_summary(text)
+            # Создаем краткое содержание
+            if hasattr(self, 'use_mock') and self.use_mock:
+                summary = self._generate_mock_summary(text)
             else:
-                return self._generate_mock_summary(text)
+                # Выбираем модель для генерации
+                if hasattr(self, 'model_type'):
+                    if self.model_type == "openai":
+                        summary = self._generate_summary_openai(text, length)
+                    elif self.model_type == "huggingface":
+                        summary = self._generate_summary_huggingface(text, length)
+                    else:
+                        summary = self._generate_advanced_mock_summary(text)
+                else:
+                    summary = self._generate_advanced_mock_summary(text)
+                    
+            # Форматируем результат
+            return self._format_summary_as_markdown(summary)
+            
         except Exception as e:
-            logger.error(f"Ошибка при генерации резюме: {str(e)}")
-            # В случае ошибки возвращаем заглушку для демонстрации
-            return self._generate_mock_summary(text)
+            log_exception(f"Ошибка при создании краткого содержания: {str(e)}")
+            return "Не удалось создать краткое содержание. Попробуйте позже."
+            
+    def _extract_text_from_pdf(self, pdf_path: str) -> str:
+        """Извлекает текст из PDF файла.
+        
+        Args:
+            pdf_path: Путь к PDF файлу
+            
+        Returns:
+            str: Извлеченный текст
+        """
+        try:
+            if not os.path.exists(pdf_path):
+                return ""
+                
+            reader = PdfReader(pdf_path)
+            text = ""
+            
+            for page in reader.pages:
+                text += page.extract_text() + "\n"
+                
+            return text
+            
+        except Exception as e:
+            log_exception(f"Ошибка при извлечении текста из PDF: {str(e)}")
+            return ""
+            
+    def _clean_text(self, text: str) -> str:
+        """Очищает текст от лишних символов.
+        
+        Args:
+            text: Исходный текст
+            
+        Returns:
+            str: Очищенный текст
+        """
+        try:
+            # Удаляем лишние пробелы и переносы строк
+            text = re.sub(r'\s+', ' ', text)
+            
+            # Удаляем специальные символы
+            text = re.sub(r'[^\w\s\.,;:!?\(\)\[\]\{\}\"\'«»—–-]', '', text)
+            
+            # Удаляем повторяющиеся знаки препинания
+            text = re.sub(r'([.,!?])\1+', r'\1', text)
+            
+            return text.strip()
+            
+        except Exception as e:
+            log_exception(f"Ошибка при очистке текста: {str(e)}")
+            return text
+            
+    def _find_references_section(self, text: str) -> str:
+        """Находит секцию со списком литературы.
+        
+        Args:
+            text: Текст статьи
+            
+        Returns:
+            str: Текст секции со списком литературы
+        """
+        try:
+            # Паттерны для поиска секции
+            patterns = [
+                r'(?:Список литературы|Литература|References|Bibliography).*?(?=\n\n|\Z)',
+                r'(?:Список использованных источников|Использованные источники).*?(?=\n\n|\Z)',
+                r'(?:Библиографический список|Библиография).*?(?=\n\n|\Z)'
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+                if match:
+                    return match.group(0)
+                    
+            return ""
+            
+        except Exception as e:
+            log_exception(f"Ошибка при поиске секции с источниками: {str(e)}")
+            return ""
+            
+    def _parse_references(self, text: str) -> List[str]:
+        """Разбивает текст на отдельные источники.
+        
+        Args:
+            text: Текст со списком литературы
+            
+        Returns:
+            List[str]: Список источников
+        """
+        try:
+            # Удаляем заголовок
+            text = re.sub(r'^.*?(?:\n|$)', '', text)
+            
+            # Разбиваем на отдельные источники
+            references = []
+            
+            # Пробуем разные паттерны
+            patterns = [
+                r'\d+\.\s+.*?(?=\d+\.\s+|\Z)',  # 1. Author Title...
+                r'\[\d+\]\s+.*?(?=\[\d+\]|\Z)',  # [1] Author Title...
+                r'(?m)^\s*\d+\.\s+.*$',  # Построчно с номерами
+                r'(?m)^\s*•\s+.*$',  # Построчно с маркерами
+                r'(?m)^\s*[\-–—]\s+.*$'  # Построчно с тире
+            ]
+            
+            for pattern in patterns:
+                matches = re.finditer(pattern, text, re.DOTALL)
+                refs = [match.group(0).strip() for match in matches]
+                if refs:
+                    references = refs
+                    break
+                    
+            # Если не нашли по паттернам, разбиваем по переносам строк
+            if not references:
+                references = [ref.strip() for ref in text.split('\n') if ref.strip()]
+                
+            return references
+            
+        except Exception as e:
+            log_exception(f"Ошибка при разборе источников: {str(e)}")
+            return []
+            
+    def _extract_reference_metadata(self, text: str) -> Optional[Dict[str, Union[str, List[str]]]]:
+        """Извлекает метаданные из текста источника.
+        
+        Args:
+            text: Текст источника
+            
+        Returns:
+            Optional[Dict[str, Union[str, List[str]]]]: Метаданные источника
+        """
+        try:
+            # Удаляем номер источника
+            text = re.sub(r'^\s*(?:\d+\.|[\[\(]\d+[\]\)])\s*', '', text)
+            
+            # Извлекаем авторов
+            authors = []
+            author_match = re.match(r'^(.*?)(?=[.,]\s+[A-ZА-Я]|\d{4})', text)
+            if author_match:
+                authors_text = author_match.group(1)
+                # Разбиваем по запятым и "и"/"and"
+                authors = re.split(r'\s*(?:,|\s+и\s+|,?\s+and\s+)\s*', authors_text)
+                authors = [a.strip() for a in authors if a.strip()]
+                
+            # Извлекаем год
+            year = None
+            year_match = re.search(r'\b(19|20)\d{2}\b', text)
+            if year_match:
+                year = year_match.group(0)
+                
+            # Извлекаем название
+            title = None
+            if authors:
+                title_match = re.search(
+                    rf'{re.escape(authors[-1])}.*?([.?!])\s+[A-ZА-Я]',
+                    text
+                )
+                if title_match:
+                    title = title_match.group(0).split(authors[-1])[-1].strip()
+                    title = re.sub(r'[.?!]\s*$', '', title)
+                    
+            # Извлекаем журнал
+            journal = None
+            if title:
+                journal_match = re.search(
+                    rf'{re.escape(title)}.*?([.?!])\s+\d',
+                    text
+                )
+                if journal_match:
+                    journal = journal_match.group(0).split(title)[-1].strip()
+                    journal = re.sub(r'[.?!]\s*$', '', journal)
+                    
+            return {
+                'authors': authors,
+                'year': year,
+                'title': title,
+                'journal': journal
+            }
+            
+        except Exception as e:
+            log_exception(f"Ошибка при извлечении метаданных источника: {str(e)}")
+            return None
+
+    def find_references(self, article: Article) -> List[str]:
+        """Находит источники в статье.
+        
+        Args:
+            article: Объект статьи
+            
+        Returns:
+            List[str]: Список найденных источников
+        """
+        try:
+            # Проверяем наличие PDF
+            if not hasattr(article, 'local_pdf_path') or not article.local_pdf_path:
+                return []
+                
+            # Извлекаем текст из PDF
+            text = self._extract_text_from_pdf(article.local_pdf_path)
+            
+            # Очищаем текст
+            text = self._clean_text(text)
+            
+            # Ищем секцию с источниками
+            references_text = self._find_references_section(text)
+            
+            if not references_text:
+                return []
+                
+            # Разбираем источники
+            references = self._parse_references(references_text)
+            
+            # Извлекаем метаданные для каждого источника
+            formatted_refs = []
+            for ref in references:
+                metadata = self._extract_reference_metadata(ref)
+                if metadata:
+                    formatted_refs.append(metadata)
+                else:
+                    formatted_refs.append({"text": ref})
+                    
+            return formatted_refs
+            
+        except Exception as e:
+            log_exception(f"Ошибка при поиске источников: {str(e)}")
+            return []
+
+    def generate_summary(self, text: str, max_length: int = 1500) -> str:
+        """Генерирует краткое содержание текста."""
+        try:
+            if hasattr(self, 'model_type'):
+                if self.model_type == "openai":
+                    return self._generate_summary_openai(text, max_length)
+                elif self.model_type == "huggingface":
+                    return self._generate_summary_huggingface(text, max_length)
+            
+            return self._generate_advanced_mock_summary(text)
+            
+        except Exception as e:
+            log_exception(f"Ошибка при генерации краткого содержания: {str(e)}")
+            return "Не удалось создать краткое содержание"
     
     def _generate_mock_summary(self, text, sections=3):
         """

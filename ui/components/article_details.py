@@ -41,32 +41,76 @@ class ArticleDetails(QTextEdit):
         Args:
             article: Объект статьи
         """
-        html = f"""
-            <style>
-                h1 {{ color: #2C3E50; font-size: 20px; margin-bottom: 16px; }}
-                h2 {{ color: #34495E; font-size: 16px; margin-top: 16px; margin-bottom: 8px; }}
-                p {{ color: #2C3E50; margin: 8px 0; line-height: 1.6; }}
-                .authors {{ color: #2980B9; }}
-                .date {{ color: #7F8C8D; }}
-                .categories {{ color: #16A085; }}
-                .abstract {{ color: #2C3E50; background: #ECF0F1; padding: 12px; border-radius: 4px; }}
-                .doi {{ color: #2980B9; text-decoration: none; }}
-            </style>
-            <h1>{article.title}</h1>
-            <p class="authors">Авторы: {', '.join(article.authors)}</p>
-            <p class="date">Дата публикации: {article.published.strftime('%d.%m.%Y')}</p>
-            <p class="categories">Категории: {', '.join(article.categories)}</p>
-            <h2>Аннотация</h2>
-            <p class="abstract">{article.abstract}</p>
-        """
-        
-        if article.doi:
-            html += f'<p>DOI: <a class="doi" href="https://doi.org/{article.doi}">{article.doi}</a></p>'
+        try:
+            if not article:
+                self.clear()
+                return
+                
+            html = f"""
+                <style>
+                    h1 {{ color: #2C3E50; font-size: 20px; margin-bottom: 16px; }}
+                    h2 {{ color: #34495E; font-size: 16px; margin-top: 16px; margin-bottom: 8px; }}
+                    p {{ color: #2C3E50; margin: 8px 0; line-height: 1.6; }}
+                    .authors {{ color: #2980B9; }}
+                    .date {{ color: #7F8C8D; }}
+                    .categories {{ color: #16A085; }}
+                    .abstract {{ color: #2C3E50; background: #ECF0F1; padding: 12px; border-radius: 4px; }}
+                    .doi {{ color: #2980B9; text-decoration: none; }}
+                    .error {{ color: #E74C3C; padding: 12px; background: #FADBD8; border-radius: 4px; }}
+                </style>
+            """
             
-        if article.url:
-            html += f'<p>URL: <a class="doi" href="{article.url}">{article.url}</a></p>'
+            # Добавляем заголовок
+            title = getattr(article, 'title', 'Без названия')
+            html += f"<h1>{title}</h1>"
             
-        self.setHtml(html)
+            # Добавляем авторов
+            authors = getattr(article, 'authors', [])
+            if authors:
+                html += f'<p class="authors">Авторы: {", ".join(authors)}</p>'
+            
+            # Добавляем дату публикации
+            published = getattr(article, 'published', None)
+            if published:
+                try:
+                    date_str = published.strftime('%d.%m.%Y')
+                    html += f'<p class="date">Дата публикации: {date_str}</p>'
+                except Exception as e:
+                    html += f'<p class="date">Дата публикации: недоступна</p>'
+            
+            # Добавляем категории
+            categories = getattr(article, 'categories', [])
+            if categories:
+                html += f'<p class="categories">Категории: {", ".join(categories)}</p>'
+            
+            # Добавляем аннотацию
+            abstract = getattr(article, 'abstract', '')
+            if abstract:
+                html += f'<h2>Аннотация</h2><p class="abstract">{abstract}</p>'
+            
+            # Добавляем DOI
+            doi = getattr(article, 'doi', None)
+            if doi:
+                html += f'<p>DOI: <a class="doi" href="https://doi.org/{doi}">{doi}</a></p>'
+                
+            # Добавляем URL
+            url = getattr(article, 'url', None)
+            if url:
+                html += f'<p>URL: <a class="doi" href="{url}">{url}</a></p>'
+                
+            self.setHtml(html)
+            
+        except Exception as e:
+            error_html = f"""
+                <style>
+                    .error {{ color: #E74C3C; padding: 12px; background: #FADBD8; border-radius: 4px; }}
+                </style>
+                <div class="error">
+                    <p>Произошла ошибка при отображении статьи:</p>
+                    <p>{str(e)}</p>
+                </div>
+            """
+            self.setHtml(error_html)
         
     def display_text(self, text, title=None):
         """Отображает текст с форматированием.

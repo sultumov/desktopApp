@@ -13,13 +13,13 @@ class Author:
 
 @dataclass
 class Article:
-    """Класс для представления научной статьи."""
+    """Модель научной статьи."""
     
     id: str
     title: str
-    authors: List[str]
-    abstract: str
     year: int
+    authors: List[str] = field(default_factory=list)
+    abstract: Optional[str] = None
     doi: Optional[str] = None
     url: Optional[str] = None
     journal: Optional[str] = None
@@ -29,19 +29,40 @@ class Article:
     keywords: List[str] = None
     full_text: Optional[str] = None
     file_path: Optional[str] = None
-    categories: List[str] = None
+    categories: List[str] = field(default_factory=list)
     added_date: datetime = None
-    source: str = "Unknown"
+    source: Optional[str] = None
     citation_count: int = 0
     reference_count: int = 0
     summary: Optional[str] = None
     references: List[str] = None
     published: Optional[datetime] = None
+    local_pdf_path: Optional[str] = None
 
     def __post_init__(self):
-        """Инициализация после создания объекта."""
+        """Проверяет и форматирует данные после инициализации."""
+        # Проверяем обязательные поля
+        if not self.id:
+            raise ValueError("ID статьи не может быть пустым")
+            
+        if not self.title:
+            raise ValueError("Название статьи не может быть пустым")
+            
+        # Форматируем опциональные поля
+        if self.authors is None:
+            self.authors = []
+            
+        if self.categories is None:
+            self.categories = []
+            
+        # Форматируем дату
+        if isinstance(self.published, str):
+            try:
+                self.published = datetime.fromisoformat(self.published)
+            except:
+                self.published = None
+                
         self.keywords = self.keywords or []
-        self.categories = self.categories or []
         self.references = self.references or []
         self.added_date = self.added_date or datetime.now()
 
@@ -59,7 +80,11 @@ class Article:
         return f"{authors} {year}. {self.title}{journal}{volume}{issue}{pages}{doi}"
 
     def to_dict(self) -> dict:
-        """Преобразует статью в словарь для сериализации."""
+        """Преобразует статью в словарь.
+        
+        Returns:
+            dict: Словарь с данными статьи
+        """
         return {
             'id': self.id,
             'title': self.title,
@@ -82,17 +107,49 @@ class Article:
             'reference_count': self.reference_count,
             'summary': self.summary,
             'references': self.references,
-            'published': self.published.isoformat() if self.published else None
+            'published': self.published.isoformat() if self.published else None,
+            'local_pdf_path': self.local_pdf_path
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> 'Article':
-        """Создает объект статьи из словаря."""
+        """Создает статью из словаря.
+        
+        Args:
+            data: Словарь с данными статьи
+            
+        Returns:
+            Article: Объект статьи
+        """
         if 'added_date' in data and data['added_date']:
             data['added_date'] = datetime.fromisoformat(data['added_date'])
         if 'published' in data and data['published']:
             data['published'] = datetime.fromisoformat(data['published'])
-        return cls(**data)
+        return cls(
+            id=data.get('id'),
+            title=data.get('title'),
+            year=data.get('year'),
+            authors=data.get('authors', []),
+            abstract=data.get('abstract'),
+            doi=data.get('doi'),
+            url=data.get('url'),
+            journal=data.get('journal'),
+            volume=data.get('volume'),
+            issue=data.get('issue'),
+            pages=data.get('pages'),
+            keywords=data.get('keywords'),
+            full_text=data.get('full_text'),
+            file_path=data.get('file_path'),
+            categories=data.get('categories', []),
+            added_date=data.get('added_date'),
+            source=data.get('source'),
+            citation_count=data.get('citation_count', 0),
+            reference_count=data.get('reference_count', 0),
+            summary=data.get('summary'),
+            references=data.get('references'),
+            published=data.get('published'),
+            local_pdf_path=data.get('local_pdf_path')
+        )
 
     def to_bibtex(self) -> str:
         """Возвращает статью в формате BibTeX."""

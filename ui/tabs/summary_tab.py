@@ -17,8 +17,12 @@ from ..components.action_buttons import ActionButtons
 from ..components.article_list import ArticleList
 from models.article import Article
 from PyPDF2 import PdfReader
+from utils import get_user_data_dir, show_error_message
 import os
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 class SummarySettingsDialog(QDialog):
     """Диалог настроек генерации краткого содержания."""
@@ -120,14 +124,10 @@ class PDFPreviewDialog(QDialog):
             self.reject()
 
 class SummaryTab(QWidget):
-    """Вкладка с кратким содержанием статьи."""
+    """Вкладка для отображения и работы с кратким содержанием статьи."""
     
     def __init__(self, parent=None):
-        """Инициализирует вкладку краткого содержания.
-        
-        Args:
-            parent: Родительский виджет (MainWindow)
-        """
+        """Инициализирует вкладку краткого содержания."""
         super().__init__(parent)
         self.parent = parent
         self.current_article = None
@@ -475,15 +475,29 @@ class SummaryTab(QWidget):
 
     def _select_pdf_file(self):
         """Открывает диалог выбора PDF файла."""
-        file_name, _ = QFileDialog.getOpenFileName(
-            self,
-            "Выберите PDF файл",
-            "",
-            "PDF файлы (*.pdf)"
-        )
-        
-        if file_name:
-            self._process_pdf_file(file_name)
+        try:
+            # Получаем путь к папке со статьями
+            storage_dir = os.path.join(get_user_data_dir(), 'pdf')
+            if not os.path.exists(storage_dir):
+                os.makedirs(storage_dir, exist_ok=True)
+                
+            file_name, _ = QFileDialog.getOpenFileName(
+                self,
+                "Выберите PDF файл",
+                storage_dir,  # Начальная директория
+                "PDF файлы (*.pdf)"
+            )
+            
+            if file_name:
+                self._process_pdf_file(file_name)
+                
+        except Exception as e:
+            logger.error(f"Ошибка при выборе PDF файла: {str(e)}", exc_info=True)
+            show_error_message(
+                self,
+                "Ошибка",
+                f"Не удалось открыть диалог выбора файла: {str(e)}"
+            )
 
     def _process_pdf_file(self, file_path: str):
         """Обрабатывает PDF файл."""
@@ -665,4 +679,27 @@ class SummaryTab(QWidget):
         Returns:
             Текст краткого содержания
         """
-        return self.summary_text.toPlainText() 
+        return self.summary_text.toPlainText()
+
+    def set_article(self, article):
+        """Устанавливает текущую статью.
+        
+        Args:
+            article: Объект статьи
+        """
+        try:
+            logger.info(f"Установка текущей статьи: {article.title}")
+            self.current_article = article
+            # Если у статьи уже есть краткое содержание, отображаем его
+            if hasattr(article, 'summary') and article.summary:
+                self.set_summary(article.summary, article.title)
+        except Exception as e:
+            logger.error(f"Ошибка при установке статьи: {str(e)}", exc_info=True)
+            
+    def get_current_article(self):
+        """Возвращает текущую статью.
+        
+        Returns:
+            Объект текущей статьи или None
+        """
+        return self.current_article 

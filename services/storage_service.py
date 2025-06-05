@@ -28,57 +28,80 @@ class StorageService:
         # Инициализируем кэш статей
         self._articles_cache = None
         
-    def save_article(self, article: Article) -> bool:
-        """Сохраняет статью в хранилище."""
+    def save_article(self, article):
+        """Сохраняет статью в локальное хранилище.
+        
+        Args:
+            article: Объект статьи для сохранения
+        """
         try:
-            # Создаем уникальный идентификатор для статьи
-            article_id = article.id or str(datetime.now().timestamp())
+            # Создаем директории если их нет
+            os.makedirs(self.articles_dir, exist_ok=True)
             
-            # Сохраняем метаданные
-            metadata = {
-                'id': article_id,
-                'title': article.title,
-                'authors': article.authors,
-                'abstract': article.abstract,
-                'published': article.published.isoformat() if article.published else None,
-                'doi': article.doi,
-                'url': article.url,
-                'categories': article.categories,
-                'source': article.source,
-                'local_pdf_path': article.local_pdf_path if hasattr(article, 'local_pdf_path') else None
-            }
-            
-            # Путь к файлу метаданных
-            metadata_path = os.path.join(self.articles_dir, f"{article_id}.json")
-            
-            # Сохраняем метаданные
-            with open(metadata_path, 'w', encoding='utf-8') as f:
-                json.dump(metadata, f, ensure_ascii=False, indent=2)
+            # Получаем чистый ID статьи (убираем версию и домен)
+            article_id = article.id
+            if '/' in article_id:
+                article_id = article_id.split('/')[-1]  # Берем последнюю часть после /
+            if 'v' in article_id:
+                article_id = article_id.split('v')[0]  # Убираем версию
                 
+            # Формируем путь для сохранения
+            json_path = os.path.join(self.articles_dir, f"{article_id}.json")
+            
+            # Сохраняем метаданные в JSON
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(article.to_dict(), f, ensure_ascii=False, indent=2)
+                
+            logger.info(f"Статья сохранена: {json_path}")
+            
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении статьи: {str(e)}", exc_info=True)
+            raise
+            
+    def add_article(self, article: Article) -> bool:
+        """Добавляет статью в хранилище.
+        
+        Args:
+            article: Объект статьи для добавления
+            
+        Returns:
+            bool: True если статья успешно добавлена
+        """
+        try:
+            # Создаем директории если их нет
+            os.makedirs(self.articles_dir, exist_ok=True)
+            os.makedirs(self.pdf_dir, exist_ok=True)
+            
+            # Получаем чистый ID статьи (убираем версию и домен)
+            article_id = article.id
+            if '/' in article_id:
+                article_id = article_id.split('/')[-1]  # Берем последнюю часть после /
+            if 'v' in article_id:
+                article_id = article_id.split('v')[0]  # Убираем версию
+                
+            # Формируем пути для сохранения
+            json_path = os.path.join(self.articles_dir, f"{article_id}.json")
+            pdf_path = os.path.join(self.pdf_dir, f"{article_id}.pdf")
+            
             # Если есть PDF, копируем его в хранилище
             if hasattr(article, 'local_pdf_path') and article.local_pdf_path:
                 if os.path.exists(article.local_pdf_path):
-                    pdf_filename = os.path.basename(article.local_pdf_path)
-                    new_pdf_path = os.path.join(self.pdf_dir, f"{article_id}_{pdf_filename}")
-                    shutil.copy2(article.local_pdf_path, new_pdf_path)
-                    
-                    # Обновляем путь к PDF в метаданных
-                    metadata['local_pdf_path'] = new_pdf_path
-                    with open(metadata_path, 'w', encoding='utf-8') as f:
-                        json.dump(metadata, f, ensure_ascii=False, indent=2)
+                    shutil.copy2(article.local_pdf_path, pdf_path)
+                    article.local_pdf_path = pdf_path
             
+            # Сохраняем метаданные в JSON
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(article.to_dict(), f, ensure_ascii=False, indent=2)
+                
             # Сбрасываем кэш
             self._articles_cache = None
-                        
+            
+            logger.info(f"Статья добавлена в хранилище: {json_path}")
             return True
             
         except Exception as e:
-            log_exception(f"Ошибка при сохранении статьи: {str(e)}")
+            logger.error(f"Ошибка при добавлении статьи: {str(e)}", exc_info=True)
             return False
-            
-    def add_article(self, article: Article) -> bool:
-        """Алиас для метода save_article."""
-        return self.save_article(article)
         
     def get_articles(self) -> List[Article]:
         """Возвращает список всех сохраненных статей."""

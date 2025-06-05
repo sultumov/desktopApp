@@ -2,12 +2,12 @@
     "interface": {
         "splitter_sizes": {
             "search_splitter": [
-                145,
-                387
+                129,
+                345
             ],
             "search_results_splitter": [
-                301,
-                695
+                174,
+                460
             ],
             "summary_splitter": [
                 175,
@@ -31,7 +31,7 @@
             800
         ],
         "window_position": [
-            7,
+            14,
             -7
         ],
         "current_tab": 0,

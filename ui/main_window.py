@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QIcon
+from PyPDF2 import PdfReader
 
 from services import ArxivService, AIService, StorageService, UserSettings
 from services.mindmap_service import MindMapService
@@ -437,7 +438,7 @@ class MainWindow(QMainWindow):
         try:
             # Если статья не передана, берем текущую
             if not article:
-                article = self.summary_tab.current_article
+                article = self.summary_tab.get_current_article()
                 
             if not article:
                 show_warning_message(
@@ -447,23 +448,55 @@ class MainWindow(QMainWindow):
                 )
                 return
                 
+            logger.info(f"Создание краткого содержания для статьи: {article.title}")
+            
+            # Очищаем ID статьи от URL и версии
+            article_id = article.id
+            if '/' in article_id:
+                article_id = article_id.split('/')[-1]  # Берем последнюю часть после /
+            if 'v' in article_id:
+                article_id = article_id.split('v')[0]  # Убираем версию
+            
             # Проверяем наличие PDF
-            if not hasattr(article, 'local_pdf_path') or not article.local_pdf_path:
+            pdf_path = None
+            if hasattr(article, 'local_pdf_path') and article.local_pdf_path:
+                pdf_path = article.local_pdf_path
+            elif hasattr(article, 'pdf_url'):
+                # Скачиваем PDF если есть URL
+                storage_dir = os.path.join("storage", "articles")
+                os.makedirs(storage_dir, exist_ok=True)
+                pdf_path = os.path.join(storage_dir, f"{article_id}.pdf")
+                if not os.path.exists(pdf_path):
+                    logger.info(f"Скачивание PDF для статьи {article.title}")
+                    if article.source == "arxiv":
+                        self.arxiv_service.download_pdf(article, pdf_path)
+                    elif article.source == "cyberleninka":
+                        self.cyberleninka_service.download_pdf(article, pdf_path)
+                    else:
+                        show_warning_message(
+                            self,
+                            "Неподдерживаемый источник",
+                            f"Скачивание PDF не поддерживается для источника: {article.source}"
+                        )
+                        return
+                article.local_pdf_path = pdf_path
+                
+            if not pdf_path or not os.path.exists(pdf_path):
                 show_warning_message(
                     self,
                     "PDF не найден",
-                    "Для создания краткого содержания необходим PDF файл статьи."
+                    "Для создания краткого содержания необходимо сначала скачать PDF файл статьи."
                 )
+                # Предлагаем скачать PDF
+                if confirm_action(
+                    self,
+                    "Скачать PDF",
+                    "Хотите скачать PDF-версию статьи?",
+                    default_yes=True
+                ):
+                    self.download_article(article)
                 return
                 
-            # Открываем диалог настроек
-            from ui.tabs.summary_tab import SummarySettingsDialog
-            settings_dialog = SummarySettingsDialog(self)
-            if settings_dialog.exec() != QDialog.DialogCode.Accepted:
-                return
-                
-            settings = settings_dialog.get_settings()
-            
             # Показываем прогресс
             progress = QProgressDialog(
                 "Создание краткого содержания...",
@@ -474,27 +507,64 @@ class MainWindow(QMainWindow):
             progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setAutoClose(True)
             progress.setMinimumDuration(0)
+            progress.show()
             
-            def update_progress():
-                """Обновляет прогресс."""
-                progress.setValue(progress.value() + 1)
-                if progress.value() >= 100:
-                    progress.close()
-                    
-            # Создаем краткое содержание
-            summary = self.ai_service.create_summary(
-                article.local_pdf_path,
-                style=settings['style'],
-                length=settings['length']
-            )
-            
-            # Отображаем результат
-            self.summary_tab.set_summary(summary, article.title)
-            self.statusBar().showMessage("Краткое содержание создано")
+            try:
+                # Извлекаем текст из PDF
+                reader = PdfReader(pdf_path)
+                text = ""
+                total_pages = len(reader.pages)
+                
+                for i, page in enumerate(reader.pages):
+                    if progress.wasCanceled():
+                        return
+                    text += page.extract_text() + "\n"
+                    progress.setValue((i + 1) * 50 // total_pages)  # Первые 50% - чтение PDF
+                
+                # Создаем краткое содержание с помощью AI сервиса
+                summary = self.ai_service.create_summary(
+                    text,
+                    style="academic",
+                    length="medium"
+                )
+                progress.setValue(75)  # 75% - создание краткого содержания
+                
+                # Сохраняем краткое содержание в статью
+                article.summary = summary
+                article.full_text = text
+                
+                # Сохраняем обновленную статью
+                self.storage_service.update_article(article)
+                progress.setValue(90)  # 90% - сохранение статьи
+                
+                # Отображаем результат в вкладке Summary
+                self.summary_tab.set_article(article)
+                self.summary_tab.set_summary(summary, article.title)
+                
+                # Переключаемся на вкладку Summary
+                self.tab_widget.setCurrentWidget(self.summary_tab)
+                progress.setValue(100)  # 100% - готово
+                
+                # Обновляем статус
+                set_status_message(self.statusBar(), "Краткое содержание создано")
+                
+            except Exception as e:
+                logger.error(f"Ошибка при обработке PDF: {str(e)}", exc_info=True)
+                show_error_message(
+                    self,
+                    "Ошибка",
+                    f"Произошла ошибка при обработке PDF: {str(e)}"
+                )
+            finally:
+                progress.close()
             
         except Exception as e:
             logger.error(f"Ошибка при создании краткого содержания: {str(e)}", exc_info=True)
-            self.statusBar().showMessage("Ошибка при создании краткого содержания")
+            show_error_message(
+                self,
+                "Ошибка",
+                f"Произошла ошибка при создании краткого содержания: {str(e)}"
+            )
             
     @gui_exception_handler()
     def copy_summary(self):
@@ -523,8 +593,56 @@ class MainWindow(QMainWindow):
             article_id: Идентификатор статьи
         """
         try:
-            # Получаем источники
-            references = self.cyberleninka_service.find_references(article_id)
+            # Получаем статью
+            article = self.search_tab.article_list.get_selected_article()
+            if not article:
+                show_warning_message(
+                    self,
+                    "Выберите статью",
+                    "Пожалуйста, выберите статью для поиска источников."
+                )
+                return
+                
+            logger.info(f"Поиск источников для статьи: {article.title}")
+            
+            # Проверяем наличие PDF
+            if not hasattr(article, 'pdf_url') and not hasattr(article, 'local_pdf_path'):
+                show_warning_message(
+                    self,
+                    "PDF не найден",
+                    "Для поиска источников необходимо сначала скачать PDF файл статьи."
+                )
+                # Предлагаем скачать PDF
+                if confirm_action(
+                    self,
+                    "Скачать PDF",
+                    "Хотите скачать PDF-версию статьи?",
+                    default_yes=True
+                ):
+                    self.download_article()
+                return
+                
+            # Если PDF еще не скачан, скачиваем его
+            if not hasattr(article, 'local_pdf_path'):
+                pdf_path = os.path.join("storage", "articles", f"{article.id}.pdf")
+                if not os.path.exists(pdf_path):
+                    logger.info("Скачивание PDF для поиска источников")
+                    self.arxiv_service.download_pdf(article, pdf_path)
+                article.local_pdf_path = pdf_path
+                
+            # Показываем прогресс
+            progress = QProgressDialog(
+                "Поиск источников...",
+                "Отмена",
+                0, 100,
+                self
+            )
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setAutoClose(True)
+            progress.setMinimumDuration(0)
+            
+            # Извлекаем источники из PDF
+            references = self.ai_service.extract_references(article.local_pdf_path)
             
             if not references:
                 show_warning_message(
@@ -534,18 +652,19 @@ class MainWindow(QMainWindow):
                 )
                 return
                 
-            # Показываем результаты
-            text = "Найденные источники:\n\n"
-            for i, ref in enumerate(references, 1):
-                text += f"{i}. {ref}\n"
-                
-            show_info_message(
-                self,
-                "Список источников",
-                text,
-                detailed=True
-            )
-                
+            # Сохраняем источники в статью
+            article.references = references
+            
+            # Отображаем результат в вкладке References
+            self.references_tab.set_article(article)
+            self.references_tab.set_references(references)
+            
+            # Переключаемся на вкладку References
+            self.tab_widget.setCurrentWidget(self.references_tab)
+            
+            # Обновляем статус
+            set_status_message(self.statusBar(), f"Найдено {len(references)} источников")
+            
         except Exception as e:
             logger.error(f"Ошибка при поиске источников: {str(e)}", exc_info=True)
             show_error_message(
@@ -697,54 +816,72 @@ class MainWindow(QMainWindow):
                 self.download_article()
             
     @gui_exception_handler()
-    def download_article(self):
-        """Скачивает PDF версию статьи."""
-        article = self.search_tab.article_list.get_selected_article()
-        if not article:
-            # Если нет выбранной статьи в результатах поиска, проверяем библиотеку
-            article = self.library_tab.get_selected_article()
+    def download_article(self, article=None):
+        """Скачивает PDF версию статьи.
+        
+        Args:
+            article: Объект статьи (опционально)
+        """
+        try:
+            # Если статья не передана, берем текущую
             if not article:
-                set_status_message(self.statusBar(), "Выберите статью для скачивания")
+                article = self.search_tab.article_list.get_selected_article()
+                
+            if not article:
+                show_warning_message(
+                    self,
+                    "Выберите статью",
+                    "Пожалуйста, выберите статью для скачивания."
+                )
                 return
+                
+            logger.info(f"Скачивание статьи: {article.title}")
             
-        # Создаем имя файла на основе ID статьи
-        file_name = os.path.join("storage", "articles", f"{article.id}.pdf")
-        
-        # Проверяем, существует ли уже файл
-        if os.path.exists(file_name):
-            if confirm_action(
+            # Определяем путь для сохранения
+            storage_dir = os.path.join("storage", "articles")
+            os.makedirs(storage_dir, exist_ok=True)
+            
+            # Очищаем ID статьи от URL и версии
+            article_id = article.id
+            if '/' in article_id:
+                article_id = article_id.split('/')[-1]  # Берем последнюю часть после /
+            if 'v' in article_id:
+                article_id = article_id.split('v')[0]  # Убираем версию
+                
+            pdf_path = os.path.join(storage_dir, f"{article_id}.pdf")
+            
+            # Скачиваем PDF
+            if article.source == "arxiv":
+                self.arxiv_service.download_pdf(article, pdf_path)
+            elif article.source == "cyberleninka":
+                self.cyberleninka_service.download_pdf(article, pdf_path)
+            else:
+                show_warning_message(
+                    self,
+                    "Неподдерживаемый источник",
+                    f"Скачивание PDF не поддерживается для источника: {article.source}"
+                )
+                return
+                
+            # Сохраняем путь к PDF в объект статьи
+            article.local_pdf_path = pdf_path
+            
+            # Обновляем статью в хранилище
+            self.storage_service.update_article(article)
+            
+            # Показываем сообщение об успехе
+            set_status_message(self.statusBar(), "PDF успешно скачан")
+            
+            # После успешного скачивания создаем краткое содержание
+            self.create_summary(article)
+            
+        except Exception as e:
+            logger.error(f"Ошибка при скачивании PDF: {str(e)}", exc_info=True)
+            show_error_message(
                 self,
-                "Файл существует",
-                "Статья уже скачана. Хотите открыть её?",
-                default_yes=True
-            ):
-                success, message = open_file(file_name)
-                set_status_message(self.statusBar(), message)
-            return
-
-        set_status_message(self.statusBar(), "Скачивание статьи...")
-        
-        # Скачиваем PDF
-        self.arxiv_service.download_pdf(article, file_name)
-        set_status_message(self.statusBar(), f"Статья сохранена в {file_name}")
-
-        # Обновляем путь к файлу в статье и сохраняем в библиотеку
-        article.file_path = file_name
-        self.storage_service.add_article(article)
-        
-        # Обновляем список библиотеки
-        self.load_library_articles()
-
-        # Спрашиваем пользователя, хочет ли он открыть статью
-        if confirm_action(
-            self,
-            "Статья скачана",
-            "Статья успешно скачана. Открыть её?",
-            default_yes=True
-        ):
-            success, message = open_file(file_name)
-            if not success:
-                set_status_message(self.statusBar(), message)
+                "Ошибка",
+                f"Произошла ошибка при скачивании PDF: {str(e)}"
+            )
 
     def _on_source_changed(self, source: str):
         """Обрабатывает изменение источника поиска."""

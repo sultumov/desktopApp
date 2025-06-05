@@ -476,14 +476,32 @@ class SearchTab(QWidget):
     @pyqtSlot()
     def _create_summary(self):
         """Создает краткое содержание для выбранной статьи."""
-        if hasattr(self.parent, 'create_summary'):
-            self.parent.create_summary()
+        try:
+            article = self.article_list.get_selected_article()
+            if not article:
+                logger.warning("Не выбрана статья для создания краткого содержания")
+                return
+                
+            logger.info(f"Создание краткого содержания для статьи: {article.title}")
+            if hasattr(self.parent, 'create_summary'):
+                self.parent.create_summary(article)
+        except Exception as e:
+            logger.error(f"Ошибка при создании краткого содержания: {str(e)}", exc_info=True)
             
     @pyqtSlot()
     def _find_references(self):
         """Ищет источники для выбранной статьи."""
-        if hasattr(self.parent, 'find_references'):
-            self.parent.find_references()
+        try:
+            article = self.article_list.get_selected_article()
+            if not article:
+                logger.warning("Не выбрана статья для поиска источников")
+                return
+                
+            logger.info(f"Поиск источников для статьи: {article.title}")
+            if hasattr(self.parent, 'find_references'):
+                self.parent.find_references(article.id)
+        except Exception as e:
+            logger.error(f"Ошибка при поиске источников: {str(e)}", exc_info=True)
             
     @pyqtSlot()
     def _save_article(self):

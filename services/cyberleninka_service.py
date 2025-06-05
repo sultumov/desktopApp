@@ -1,25 +1,27 @@
 """Сервис для работы с КиберЛенинкой."""
 
-import requests
-from datetime import datetime
-from models.article import Article
-import logging
-from bs4 import BeautifulSoup
-import re
-import urllib.parse
-import time
 import os
+import re
+import time
 import json
-from typing import Optional, List, Dict, Any
-from pathlib import Path
-import hashlib
 import random
+import hashlib
+import logging
+from pathlib import Path
+
+import requests
+import urllib.parse
+from typing import List, Optional, Dict, Union, Any
+from datetime import datetime, timedelta
+from bs4 import BeautifulSoup
 from requests.exceptions import RequestException
-from urllib3.exceptions import HTTPError
-from socket import timeout
+
+from models.article import Article
+from utils.error_utils import log_exception
 
 # Настройка логгера
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Устанавливаем уровень логирования DEBUG
 
 class CyberleninkaService:
     """Сервис для работы с КиберЛенинкой."""
@@ -103,6 +105,30 @@ class CyberleninkaService:
                 
                 # Обновляем User-Agent перед запросом
                 self._update_headers()
+                
+                # Если есть параметры запроса, кодируем их правильно
+                if 'params' in kwargs:
+                    encoded_params = {}
+                    for key, value in kwargs['params'].items():
+                        if isinstance(value, str):
+                            encoded_params[key] = urllib.parse.quote(value)
+                        else:
+                            encoded_params[key] = value
+                    kwargs['params'] = encoded_params
+                
+                # Добавляем дополнительные заголовки для поискового запроса
+                if '/search' in url:
+                    self.session.headers.update({
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Referer': 'https://cyberleninka.ru/',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'same-origin',
+                        'Sec-Fetch-User': '?1',
+                        'Upgrade-Insecure-Requests': '1'
+                    })
                 
                 # Выполняем запрос
                 response = getattr(self.session, method)(url, timeout=10, **kwargs)
@@ -199,12 +225,22 @@ class CyberleninkaService:
             logger.error("Обнаружена капча на странице")
             return None
             
+        # Логируем структуру страницы для отладки
+        logger.debug("Анализ структуры страницы:")
+        logger.debug(f"Title: {soup.title.string if soup.title else 'No title'}")
+        logger.debug(f"Meta description: {soup.find('meta', {'name': 'description'})}")
+        logger.debug("Основные блоки:")
+        for tag in soup.find_all(['main', 'div', 'ul'], class_=True):
+            logger.debug(f"- {tag.name}: class='{tag.get('class')}' id='{tag.get('id', '')}'")
+            
         # Основные селекторы для поиска результатов
         results_selectors = [
-            '.search-results',
-            '#search-results',
-            '.articles-list',
-            '.articles',
+            '.articles > .list',  # Новая структура
+            '.articles .list > li',
+            '.search-results > ul > li',
+            '#search-results .list',
+            '.articles-list > .list',
+            '.articles > ul',
             'main .items',
             '.search-results-list',
             '[data-target="search-results"]',
@@ -212,26 +248,42 @@ class CyberleninkaService:
             '#publications',
             'main article',
             '.content article',
-            '[itemtype="http://schema.org/ScholarlyArticle"]'
+            '[itemtype="http://schema.org/ScholarlyArticle"]',
+            '.article-list',
+            '.search-list'
         ]
         
         # Пробуем найти блок по селекторам
         for selector in results_selectors:
-            results_block = soup.select_one(selector)
-            if results_block:
+            logger.debug(f"Проверка селектора: {selector}")
+            results = soup.select(selector)
+            if results:
                 logger.debug(f"Найден блок результатов по селектору: {selector}")
-                return results_block
+                logger.debug(f"Количество найденных элементов: {len(results)}")
+                return results
                 
         # Если не нашли по селекторам, ищем по содержимому
-        potential_blocks = [
-            # Ищем блоки, которые могут содержать статьи
-            div for div in soup.find_all('div') 
-            if div.find_all('article') or 
-               div.find_all(class_=lambda x: x and ('article' in x.lower() or 'publication' in x.lower()))
-        ]
+        logger.debug("Поиск по содержимому...")
+        potential_blocks = []
+        
+        # Ищем блоки с характерными признаками статей
+        for container in soup.find_all(['div', 'ul']):
+            # Проверяем наличие статей или элементов списка
+            articles = container.find_all(['article', 'li'])
+            if articles:
+                # Проверяем, содержат ли эти элементы характерные признаки статей
+                for article in articles[:3]:  # Проверяем первые 3 элемента
+                    has_title = bool(article.find(['h1', 'h2', 'h3', 'h4', '.title', '[itemprop="name"]']))
+                    has_link = bool(article.find('a', href=True))
+                    has_author = bool(article.find(['[itemprop="author"]', '.author', '.authors']))
+                    
+                    if has_title and (has_link or has_author):
+                        logger.debug(f"Найден потенциальный блок результатов: {container.name} {container.get('class', '')}")
+                        potential_blocks.append(articles)
+                        break
         
         if potential_blocks:
-            logger.debug("Найден блок результатов по содержимому")
+            logger.debug(f"Найдено {len(potential_blocks)} потенциальных блоков с результатами")
             return potential_blocks[0]
             
         # Проверяем, есть ли сообщение об отсутствии результатов
@@ -239,7 +291,8 @@ class CyberleninkaService:
             'ничего не найдено',
             'нет результатов',
             'no results',
-            'not found'
+            'not found',
+            'по вашему запросу'
         ]
         
         page_text = soup.text.lower()
@@ -248,10 +301,8 @@ class CyberleninkaService:
             return None
             
         logger.error("Блок с результатами поиска не найден")
-        logger.debug("Структура страницы:")
-        logger.debug(f"Title: {soup.title.string if soup.title else 'No title'}")
-        logger.debug(f"Body classes: {soup.body.get('class', []) if soup.body else 'No body'}")
-        logger.debug(f"Main content areas: {[tag.name for tag in soup.find_all(['main', 'article', 'div'], class_=True)]}")
+        logger.debug("Полная структура страницы:")
+        logger.debug(soup.prettify()[:2000])  # Первые 2000 символов для анализа
         
         return None
         
@@ -336,49 +387,62 @@ class CyberleninkaService:
                 logger.info("Возвращены результаты из кэша")
                 return [Article(**article_data) for article_data in cached_data]
 
-                # Формируем URL для поиска
-                search_url = f"{self.BASE_URL}/search"
-                params = {
-                    'q': query,
-                    'page': page
-                }
+            # Формируем URL для поиска
+            search_url = f"{self.BASE_URL}/search"
+            params = {
+                'q': query,
+                'page': page
+            }
 
-                # Добавляем параметры года если указаны
-                if year_from:
-                    params['year_from'] = year_from
-                if year_to:
-                    params['year_to'] = year_to
+            # Добавляем параметры года если указаны
+            if year_from:
+                params['year_from'] = year_from
+            if year_to:
+                params['year_to'] = year_to
 
-                # Выполняем запрос
-                response = self._make_request(search_url, params=params)
+            # Логируем URL и параметры запроса
+            logger.info(f"Поисковый URL: {search_url}")
+            logger.info(f"Параметры запроса: {params}")
 
-                # Парсим результаты
-                soup = BeautifulSoup(response.text, 'html.parser')
+            # Выполняем запрос
+            response = self._make_request(search_url, params=params)
+            
+            # Логируем ответ сервера
+            logger.info(f"Код ответа: {response.status_code}")
+            logger.info(f"Заголовки ответа: {response.headers}")
+            logger.debug(f"Текст ответа: {response.text[:500]}...")  # Первые 500 символов
 
-                # Ищем блок с результатами
-                results_block = self._find_results_block(soup)
-                if not results_block:
-                    logger.warning("Блок с результатами не найден")
-                    return []
+            # Парсим результаты
+            soup = BeautifulSoup(response.text, 'html.parser')
 
-                    # Парсим статьи
-                articles = self._parse_articles(results_block, limit, categories)
+            # Ищем блок с результатами
+            results_block = self._find_results_block(soup)
+            if not results_block:
+                logger.warning("Блок с результатами не найден")
+                logger.debug(f"HTML страницы: {soup.prettify()[:1000]}...")  # Первые 1000 символов
+                return []
 
-                # Сохраняем в кэш только если нашли результаты
-                if articles:
-                    self._save_to_cache(cache_key, [article.to_dict() for article in articles])
+            # Парсим статьи
+            articles = self._parse_articles(results_block, limit, categories)
 
-                    return articles
+            # Логируем количество найденных статей
+            logger.info(f"Найдено статей: {len(articles)}")
+
+            # Сохраняем в кэш только если нашли результаты
+            if articles:
+                self._save_to_cache(cache_key, [article.to_dict() for article in articles])
+
+            return articles
                 
         except Exception as e:
             logger.error(f"Ошибка при поиске статей: {str(e)}", exc_info=True)
             return []
             
-    def _parse_articles(self, container: BeautifulSoup, limit: int, categories: Optional[List[str]] = None) -> List[Article]:
+    def _parse_articles(self, container: List[BeautifulSoup], limit: int, categories: Optional[List[str]] = None) -> List[Article]:
         """Парсинг статей из HTML.
         
         Args:
-            container: BeautifulSoup объект с контейнером
+            container: Список элементов BeautifulSoup с контейнерами статей
             limit: Максимальное количество статей
             categories: Список категорий для фильтрации
             
@@ -386,50 +450,110 @@ class CyberleninkaService:
             Список статей
         """
         articles = []
-        article_elements = self._find_articles(container)
+        
+        # Если container - это список элементов li, используем их напрямую
+        article_elements = container
+        if len(container) == 1 and container[0].name in ['div', 'ul']:
+            # Если получили один контейнер, ищем в нем элементы статей
+            article_elements = container[0].find_all(['li', 'article'])
+        
+        logger.debug(f"Найдено элементов для парсинга: {len(article_elements)}")
         
         for article_elem in article_elements[:limit]:
             try:
-                # Извлекаем основную информацию
-                title_elem = article_elem.find(['h2', 'h3', 'h4', '.title', '[itemprop="name"]'])
-                title = title_elem.get_text(strip=True) if title_elem else None
+                logger.debug(f"Парсинг элемента: {article_elem.name} {article_elem.get('class', '')}")
                 
-                if not title:
-                    continue
-                    
-                # Извлекаем авторов
-                authors = []
-                authors_elem = article_elem.find(['[itemprop="author"]', '.authors', '.author'])
-                if authors_elem:
-                    author_names = authors_elem.get_text(strip=True).split(',')
-                    authors = [name.strip() for name in author_names if name.strip()]
-                    
-                # Извлекаем год
-                year = None
-                year_match = re.search(r'\b(19|20)\d{2}\b', article_elem.get_text())
-                if year_match:
-                    year = int(year_match.group())
-                    
-                # Извлекаем URL
+                # Извлекаем основную информацию
+                title = None
                 url = None
+                
+                # Ищем ссылку, которая обычно содержит заголовок
                 link_elem = article_elem.find('a', href=True)
                 if link_elem:
                     url = urllib.parse.urljoin(self.BASE_URL, link_elem['href'])
-                            
+                    # Пробуем найти заголовок в ссылке
+                    title_elem = link_elem.find(['h2', 'h3', 'h4', '.title', '[itemprop="name"]'])
+                    if title_elem:
+                        title = title_elem.get_text(strip=True)
+                    else:
+                        # Если в ссылке нет специального элемента с заголовком, используем текст ссылки
+                        title = link_elem.get_text(strip=True)
+                
+                if not title:
+                    # Если не нашли в ссылке, ищем заголовок в самом элементе статьи
+                    title_elem = article_elem.find(['h2', 'h3', 'h4', '.title', '[itemprop="name"]'])
+                    if title_elem:
+                        title = title_elem.get_text(strip=True)
+                
+                if not title or not url:
+                    logger.debug("Пропуск элемента: не найден заголовок или URL")
+                    continue
+                
+                # Извлекаем ID из URL
+                article_id = url.split('/')[-1] if url else None
+                
+                # Извлекаем авторов
+                authors = []
+                authors_container = article_elem.find(['[itemprop="author"]', '.authors', '.author', '.authors-list'])
+                if authors_container:
+                    # Сначала ищем отдельные элементы авторов
+                    author_elements = authors_container.find_all(['a', 'span'])
+                    if author_elements:
+                        for author_elem in author_elements:
+                            author_name = author_elem.get_text(strip=True)
+                            if author_name and not any(x in author_name.lower() for x in ['автор', 'authors']):
+                                authors.append(author_name)
+                    
+                    if not authors:
+                        # Если не нашли отдельные элементы, берем весь текст
+                        author_text = authors_container.get_text(strip=True)
+                        # Очищаем от лишних слов
+                        author_text = re.sub(r'^(автор[ы]?|author[s]?)[:]\s*', '', author_text, flags=re.I)
+                        # Разделяем по запятой и очищаем
+                        authors = [name.strip() for name in author_text.split(',') if name.strip()]
+                
+                # Извлекаем год
+                year = None
+                year_container = article_elem.find(class_=lambda x: x and 'year' in x.lower())
+                if year_container:
+                    year_match = re.search(r'\b(19|20)\d{2}\b', year_container.get_text())
+                    if year_match:
+                        year = int(year_match.group())
+                if not year:
+                    # Если не нашли в специальном контейнере, ищем в любом тексте
+                    year_match = re.search(r'\b(19|20)\d{2}\b', article_elem.get_text())
+                    if year_match:
+                        year = int(year_match.group())
+                
                 # Извлекаем аннотацию
                 abstract = None
-                abstract_elem = article_elem.find(['[itemprop="description"]', '.abstract', '.summary'])
+                abstract_elem = article_elem.find(['[itemprop="description"]', '.abstract', '.summary', '.description'])
                 if abstract_elem:
                     abstract = abstract_elem.get_text(strip=True)
-                    
+                
                 # Извлекаем категории
                 article_categories = []
-                categories_elem = article_elem.find(['[itemprop="about"]', '.categories', '.tags'])
-                if categories_elem:
-                    article_categories = [cat.strip() for cat in categories_elem.get_text(strip=True).split(',')]
-                        
+                categories_container = article_elem.find(['[itemprop="about"]', '.categories', '.tags', '.subjects'])
+                if categories_container:
+                    # Сначала ищем отдельные элементы категорий
+                    category_elements = categories_container.find_all(['a', 'span'])
+                    if category_elements:
+                        for cat_elem in category_elements:
+                            cat_name = cat_elem.get_text(strip=True)
+                            if cat_name:
+                                article_categories.append(cat_name)
+                    
+                    if not article_categories:
+                        # Если не нашли отдельные элементы, берем весь текст
+                        category_text = categories_container.get_text(strip=True)
+                        # Очищаем от лишних слов
+                        category_text = re.sub(r'^(категори[и]?|categor(y|ies))[:]\s*', '', category_text, flags=re.I)
+                        # Разделяем по запятой и очищаем
+                        article_categories = [cat.strip() for cat in category_text.split(',') if cat.strip()]
+                
                 # Создаем объект статьи
                 article = Article(
+                    id=f"cyberleninka_{article_id}" if article_id else None,
                     title=title,
                     authors=authors,
                     year=year,
@@ -438,6 +562,8 @@ class CyberleninkaService:
                     categories=article_categories,
                     source="cyberleninka"
                 )
+                
+                logger.debug(f"Создана статья: {article.title}")
                 
                 # Проверяем соответствие фильтрам
                 if self._matches_filters(article, categories):
@@ -450,6 +576,7 @@ class CyberleninkaService:
             if len(articles) >= limit:
                 break
                 
+        logger.info(f"Успешно обработано статей: {len(articles)}")
         return articles
         
     def _matches_filters(self, article: Article, categories: Optional[List[str]] = None) -> bool:
@@ -708,4 +835,221 @@ class CyberleninkaService:
             return response.status_code == 200
         except Exception as e:
             logger.error(f"Сервис недоступен: {str(e)}")
-            return False 
+            return False
+
+    def extract_keywords(self, article_id: str) -> List[str]:
+        """Извлекает ключевые слова из статьи.
+        
+        Args:
+            article_id: Идентификатор статьи
+            
+        Returns:
+            Список ключевых слов
+        """
+        logger.info(f"Извлечение ключевых слов для статьи: {article_id}")
+        
+        try:
+            # Получаем страницу статьи
+            article_url = f"{self.BASE_URL}/article/{article_id.replace('cyberleninka_', '')}"
+            response = self._make_request(article_url)
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Ищем блок с ключевыми словами
+            keywords = []
+            
+            # Пробуем разные селекторы для поиска ключевых слов
+            keyword_selectors = [
+                '[itemprop="keywords"]',
+                '.keywords',
+                '.article-tags',
+                '.tags'
+            ]
+            
+            for selector in keyword_selectors:
+                keyword_block = soup.select_one(selector)
+                if keyword_block:
+                    # Извлекаем ключевые слова
+                    for keyword in keyword_block.stripped_strings:
+                        # Очищаем и нормализуем ключевое слово
+                        keyword = keyword.strip().strip(',').strip()
+                        if keyword and keyword.lower() not in ['ключевые слова:', 'keywords:', 'tags:']:
+                            keywords.append(keyword)
+                    break
+            
+            if not keywords:
+                # Если не нашли по селекторам, ищем в тексте
+                text_patterns = [
+                    r'Ключевые слова:?\s*([^\.]+)',
+                    r'Keywords:?\s*([^\.]+)',
+                    r'Теги:?\s*([^\.]+)'
+                ]
+                
+                text = soup.get_text()
+                for pattern in text_patterns:
+                    match = re.search(pattern, text, re.I)
+                    if match:
+                        # Разбиваем на отдельные слова
+                        words = match.group(1).split(',')
+                        keywords.extend([w.strip() for w in words if w.strip()])
+                        break
+            
+            # Удаляем дубликаты и сортируем
+            keywords = sorted(set(keywords))
+            
+            logger.info(f"Найдено ключевых слов: {len(keywords)}")
+            return keywords
+            
+        except Exception as e:
+            logger.error(f"Ошибка при извлечении ключевых слов: {str(e)}", exc_info=True)
+            return []
+
+    def find_references(self, article_id: str) -> List[str]:
+        """Извлекает список источников из статьи.
+        
+        Args:
+            article_id: Идентификатор статьи
+            
+        Returns:
+            Список найденных источников
+        """
+        logger.info(f"Поиск источников для статьи: {article_id}")
+        
+        try:
+            # Получаем полный текст статьи
+            text = self.get_full_text(article_id)
+            
+            if not text:
+                logger.warning("Не удалось получить текст статьи")
+                return []
+                
+            # Ищем секцию с источниками
+            references = []
+            
+            # Паттерны для поиска заголовка списка литературы
+            header_patterns = [
+                r'Список литературы:?',
+                r'Литература:?',
+                r'Библиографический список:?',
+                r'Библиография:?',
+                r'References:?',
+                r'Bibliography:?'
+            ]
+            
+            # Ищем начало списка литературы
+            start_pos = -1
+            for pattern in header_patterns:
+                match = re.search(pattern, text, re.I)
+                if match:
+                    start_pos = match.end()
+                    break
+                    
+            if start_pos == -1:
+                logger.warning("Не найден список литературы")
+                return []
+                
+            # Получаем текст после заголовка
+            references_text = text[start_pos:].strip()
+            
+            # Паттерны для поиска отдельных источников
+            ref_patterns = [
+                r'\d+\.\s+[А-Я][^.]+\.',  # Нумерованные источники
+                r'[А-Я][а-я]+\s+[А-Я]\.\s*[А-Я]\.',  # Автор И.О.
+                r'\[(\d+)\][\s\n]*([^[]+)',  # [1] Источник
+                r'(?<!\d)(\d{4})[\s\n]*([A-ZА-Я][^.]+\.)',  # Год Источник
+                r'([A-ZА-Я][a-zа-я]+(?:\s+(?:et\.?\s+al\.?|and|&)\s+[A-ZА-Я][a-zа-я]+)?)\s+\((\d{4})\)'  # Автор (Год)
+            ]
+            
+            # Ищем источники по паттернам
+            for pattern in ref_patterns:
+                matches = re.finditer(pattern, references_text)
+                for match in matches:
+                    ref = match.group(0).strip()
+                    if ref and ref not in references and len(ref) > 10:  # Проверяем минимальную длину
+                        references.append(ref)
+                        
+            # Если не нашли по паттернам, пробуем разбить по переносам строк
+            if not references:
+                lines = references_text.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line and len(line) > 10 and not line.lower().startswith(('список', 'литература', 'references')):
+                        references.append(line)
+                        
+            logger.info(f"Найдено источников: {len(references)}")
+            return references
+            
+        except Exception as e:
+            logger.error(f"Ошибка при поиске источников: {str(e)}", exc_info=True)
+            return []
+
+    def get_article(self, article_id: str) -> Optional[Article]:
+        """Получает информацию о статье по её ID.
+        
+        Args:
+            article_id: Идентификатор статьи
+            
+        Returns:
+            Объект статьи или None в случае ошибки
+        """
+        logger.info(f"Получение информации о статье: {article_id}")
+        
+        try:
+            # Получаем страницу статьи
+            article_url = f"{self.BASE_URL}/article/{article_id.replace('cyberleninka_', '')}"
+            response = self._make_request(article_url)
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Извлекаем основную информацию
+            title = None
+            title_elem = soup.find(['h1', '[itemprop="name"]'])
+            if title_elem:
+                title = title_elem.get_text(strip=True)
+                
+            if not title:
+                logger.warning("Не найдено название статьи")
+                return None
+                
+            # Извлекаем авторов
+            authors = []
+            authors_elem = soup.find(['[itemprop="author"]', '.authors', '.author'])
+            if authors_elem:
+                author_names = authors_elem.get_text(strip=True).split(',')
+                authors = [name.strip() for name in author_names if name.strip()]
+                
+            # Извлекаем год
+            year = None
+            year_match = re.search(r'\b(19|20)\d{2}\b', soup.get_text())
+            if year_match:
+                year = int(year_match.group())
+                
+            # Извлекаем аннотацию
+            abstract = None
+            abstract_elem = soup.find(['[itemprop="description"]', '.abstract', '.summary'])
+            if abstract_elem:
+                abstract = abstract_elem.get_text(strip=True)
+                
+            # Извлекаем категории
+            categories = []
+            categories_elem = soup.find(['[itemprop="about"]', '.categories', '.tags'])
+            if categories_elem:
+                categories = [cat.strip() for cat in categories_elem.get_text(strip=True).split(',')]
+                
+            # Создаем объект статьи
+            article = Article(
+                id=article_id,
+                title=title,
+                authors=authors,
+                year=year,
+                abstract=abstract,
+                url=article_url,
+                categories=categories,
+                source="cyberleninka"
+            )
+            
+            return article
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении информации о статье: {str(e)}", exc_info=True)
+            return None 

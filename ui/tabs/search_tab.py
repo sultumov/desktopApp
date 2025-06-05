@@ -353,17 +353,25 @@ class SearchTab(QWidget):
             if not query:
                 return
 
+            logger.info(f"Начало поиска статей. Запрос: {query}")
+            logger.info(f"Тип поиска: {self.search_type.currentText()}")
+            logger.info(f"Фильтр даты: {self.date_filter.currentText()}")
+            logger.info(f"Количество результатов: {self.results_count.value()}")
+
             # Отключаем элементы управления на время поиска
             self._set_controls_enabled(False)
+            logger.info("Элементы управления отключены")
             
             # Очищаем предыдущие результаты
             self.clear_results()
+            logger.info("Предыдущие результаты очищены")
             
             # Получаем параметры поиска
             search_type = self.search_type.currentText()
             date_filter = self.date_filter.currentText()
             
             # Запускаем поиск через родительское окно
+            logger.info("Запуск поиска через MainWindow")
             self.parent.search_articles(
                 query=query,
                 search_type=search_type,
@@ -375,6 +383,7 @@ class SearchTab(QWidget):
         finally:
             # Включаем элементы управления
             self._set_controls_enabled(True)
+            logger.info("Элементы управления включены")
             
     def _set_controls_enabled(self, enabled: bool):
         """Включает/отключает элементы управления.
@@ -458,7 +467,9 @@ class SearchTab(QWidget):
             article: Объект статьи
         """
         try:
+            logger.info(f"Отображение информации о статье: {article.title}")
             self.article_details.display_article(article)
+            logger.info("Информация о статье успешно отображена")
         except Exception as e:
             logger.error(f"Ошибка при отображении информации о статье: {str(e)}", exc_info=True)
             

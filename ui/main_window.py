@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QIcon
 
 from services import ArxivService, AIService, StorageService, UserSettings
-from services.cyberleninka_service import CyberleninkaService
+from services.mindmap_service import MindMapService
 from .dialogs.settings_dialog import SettingsDialog
 from .tabs.search_tab import SearchTab
 from .tabs.summary_tab import SummaryTab
@@ -43,18 +43,31 @@ class MainWindow(QMainWindow):
         super().__init__()
         
         try:
+            logger.info("Инициализация главного окна")
+            
             # Инициализация сервисов
+            logger.info("Инициализация ArxivService")
             self.arxiv_service = ArxivService()
-            self.cyberleninka_service = CyberleninkaService()
+            logger.info("Инициализация AIService")
             self.ai_service = AIService()
+            logger.info("Инициализация StorageService")
             self.storage_service = StorageService()
+            logger.info("Инициализация UserSettings")
             self.user_settings = UserSettings()
+            logger.info("Инициализация MindMapService")
+            self.mindmap_service = MindMapService()  # Добавляем сервис для интеллект-карт
 
             # Настройка главного окна
             self.setup_ui()
 
             # Загружаем статьи в библиотеку при запуске
             self.load_library_articles()
+
+            # Подключаем сигналы
+            self.search_tab.article_list.create_mindmap.connect(self.create_mindmap)
+            self.search_tab.article_list.find_references.connect(self.find_references)
+
+            logger.info("Главное окно успешно инициализировано")
 
         except Exception as e:
             logger.error(f"Ошибка при инициализации главного окна: {str(e)}", exc_info=True)
@@ -114,8 +127,7 @@ class MainWindow(QMainWindow):
         
         # Добавляем выбор источника в поисковую вкладку
         self.search_tab.add_source_selector([
-            "ArXiv",
-            "КиберЛенинка"
+            "ArXiv"
         ])
         
         # Подключаем обработчик выбора источника
@@ -227,6 +239,11 @@ class MainWindow(QMainWindow):
             
         # Отслеживание изменения вкладки
         self.tab_widget.currentChanged.connect(self.tab_changed)
+
+        # Добавляем источники поиска
+        self.search_tab.add_source_selector(["ArXiv"])
+        # Устанавливаем ArXiv как источник по умолчанию
+        self.search_tab.set_source("ArXiv")
         
     def resizeEvent(self, event):
         """Обрабатывает событие изменения размера окна."""
@@ -307,71 +324,49 @@ class MainWindow(QMainWindow):
                 
             # Получаем текущий источник
             source = self.search_tab.get_current_source()
-            
-            # Проверяем язык запроса
-            is_russian_query = bool(re.search('[а-яА-Я]', query))
-            
-            # Если запрос на русском, используем только КиберЛенинку
-            if is_russian_query and source == "ArXiv":
-                show_warning_message(
-                    self,
-                    "Русскоязычный запрос",
-                    "Для поиска на русском языке используйте КиберЛенинку. Переключаем источник автоматически."
-                )
-                self.search_tab.set_source("КиберЛенинка")
-                source = "КиберЛенинка"
+            logger.info(f"Поиск статей. Источник: {source}, Запрос: {query}, Тип: {search_type}, Фильтр: {date_filter}")
             
             # Формируем поисковый запрос
             search_query = self._build_search_query(query, search_type, date_filter)
+            logger.info(f"Сформирован поисковый запрос: {search_query}")
             
             # Отключаем элементы управления на время поиска
             self.search_tab._set_controls_enabled(False)
             
             try:
-                # Выполняем поиск в зависимости от выбранного источника
+                # Выполняем поиск в зависимости от источника
                 if source == "ArXiv":
-                    # Для ArXiv переводим запрос на английский
-                    translated_query = translate_text(search_query, 'en')
-                    set_status_message(self.statusBar(), "Выполняется поиск в ArXiv...")
-                    
-                    articles = self.arxiv_service.search_articles(translated_query)
-                    
-                    if not articles:
-                        set_status_message(self.statusBar(), "Статьи не найдены")
-                        show_info_message(
-                            self,
-                            "Результаты поиска",
-                            "По вашему запросу ничего не найдено. Попробуйте изменить запрос или параметры поиска."
-                        )
-                        return
-                    
-                    # Переводим результаты на русский
-                    set_status_message(self.statusBar(), "Переводим результаты на русский язык...")
-                    articles = self._translate_arxiv_articles(articles)
-                    
-                    # Обновляем UI
-                    self.search_tab.display_results(articles)
-                    set_status_message(self.statusBar(), f"Найдено статей: {len(articles)}")
-                    
-                elif source == "КиберЛенинка":
-                    # Проверяем доступность сервиса
-                    if not self.cyberleninka_service.check_availability():
-                        show_warning_message(
-                            self,
-                            "КиберЛенинка временно недоступна",
-                            "Сервис КиберЛенинки сейчас недоступен. Попробуйте позже."
-                        )
-                        return
-                    
-                    articles = self.cyberleninka_service.search_articles(search_query)
+                    # Для ArXiv переводим запрос на английский если есть русские символы
+                    if bool(re.search('[а-яА-Я]', search_query)):
+                        translated_query = translate_text(search_query, 'en')
+                        logger.info(f"Запрос переведен на английский: {translated_query}")
+                        set_status_message(self.statusBar(), "Выполняется поиск в ArXiv...")
+                        articles = self.arxiv_service.search_articles(translated_query)
+                        # Переводим результаты обратно на русский
+                        articles = self._translate_arxiv_articles(articles)
+                    else:
+                        logger.info("Поиск на ArXiv без перевода")
+                        articles = self.arxiv_service.search_articles(search_query)
                     
                     if not articles:
+                        logger.info("Статьи не найдены")
                         show_info_message(
                             self,
                             "Нет результатов",
                             "По вашему запросу ничего не найдено. Попробуйте изменить запрос."
                         )
                         return
+                        
+                    logger.info(f"Найдено статей: {len(articles)}")
+                    
+                    # Отображаем результаты
+                    self.search_tab.clear_results()  # Очищаем предыдущие результаты
+                    for article in articles:
+                        self.search_tab.add_search_result(article)
+                        logger.debug(f"Добавлена статья: {article.title}")
+                    
+                    # Обновляем статус
+                    set_status_message(self.statusBar(), f"Найдено статей: {len(articles)}")
                         
             except Exception as e:
                 logger.error(f"Ошибка при поиске статей: {str(e)}", exc_info=True)
@@ -521,61 +516,43 @@ class MainWindow(QMainWindow):
                 
     # Методы для работы с источниками
     @gui_exception_handler()
-    def find_references(self, article=None):
-        """Находит источники в статье.
+    def find_references(self, article_id: str):
+        """Ищет источники для статьи.
         
         Args:
-            article: Объект статьи (опционально)
+            article_id: Идентификатор статьи
         """
         try:
-            # Если статья не передана, берем текущую
-            if not article:
-                article = self.references_tab.current_article
-                
-            if not article:
+            # Получаем источники
+            references = self.cyberleninka_service.find_references(article_id)
+            
+            if not references:
                 show_warning_message(
                     self,
-                    "Выберите статью",
-                    "Пожалуйста, выберите статью для поиска источников."
+                    "Нет источников",
+                    "Не удалось найти источники в статье."
                 )
                 return
                 
-            # Проверяем наличие PDF
-            if not hasattr(article, 'local_pdf_path') or not article.local_pdf_path:
-                show_warning_message(
-                    self,
-                    "PDF не найден",
-                    "Для поиска источников необходим PDF файл статьи."
-                )
-                return
+            # Показываем результаты
+            text = "Найденные источники:\n\n"
+            for i, ref in enumerate(references, 1):
+                text += f"{i}. {ref}\n"
                 
-            # Показываем прогресс
-            progress = QProgressDialog(
-                "Поиск источников...",
-                "Отмена",
-                0, 100,
-                self
+            show_info_message(
+                self,
+                "Список источников",
+                text,
+                detailed=True
             )
-            progress.setWindowModality(Qt.WindowModality.WindowModal)
-            progress.setAutoClose(True)
-            progress.setMinimumDuration(0)
-            
-            def update_progress():
-                """Обновляет прогресс."""
-                progress.setValue(progress.value() + 1)
-                if progress.value() >= 100:
-                    progress.close()
-                    
-            # Ищем источники
-            references = self.ai_service.find_references(article.local_pdf_path)
-            
-            # Отображаем результат
-            self.references_tab.set_references(references, article.title)
-            self.statusBar().showMessage("Источники найдены")
-            
+                
         except Exception as e:
             logger.error(f"Ошибка при поиске источников: {str(e)}", exc_info=True)
-            self.statusBar().showMessage("Ошибка при поиске источников")
+            show_error_message(
+                self,
+                "Ошибка",
+                f"Произошла ошибка при поиске источников: {str(e)}"
+            )
             
     @gui_exception_handler()
     def copy_references(self):
@@ -774,18 +751,6 @@ class MainWindow(QMainWindow):
         try:
             logger.info(f"Выбран источник: {source}")
             
-            if source == "КиберЛенинка":
-                # Проверяем доступность сервиса при переключении
-                if not self.cyberleninka_service.check_availability():
-                    show_warning_message(
-                        self,
-                        "КиберЛенинка временно недоступна",
-                        "Сервис КиберЛенинки сейчас недоступен. Попробуйте позже или выберите другой источник."
-                    )
-                    # Возвращаемся к ArXiv
-                    self.search_tab.set_source("ArXiv")
-                    return
-                    
             # Очищаем результаты поиска при смене источника
             self.search_tab.clear_results()
             
@@ -795,4 +760,54 @@ class MainWindow(QMainWindow):
                 self,
                 "Ошибка",
                 "Произошла ошибка при смене источника. Попробуйте перезапустить приложение."
+            ) 
+
+    @gui_exception_handler()
+    def create_mindmap(self, article_id: str):
+        """Создает интеллект-карту для статьи.
+        
+        Args:
+            article_id: Идентификатор статьи
+        """
+        try:
+            # Получаем ключевые слова
+            keywords = self.cyberleninka_service.extract_keywords(article_id)
+            
+            if not keywords:
+                show_warning_message(
+                    self,
+                    "Нет ключевых слов",
+                    "Не удалось найти ключевые слова в статье."
+                )
+                return
+                
+            # Получаем статью
+            article = self.cyberleninka_service.get_article(article_id)
+            if not article:
+                show_error_message(
+                    self,
+                    "Ошибка",
+                    "Не удалось получить информацию о статье."
+                )
+                return
+                
+            # Создаем интеллект-карту
+            mindmap_path = self.mindmap_service.create_mindmap(article, keywords)
+            
+            if mindmap_path:
+                # Открываем изображение
+                os.startfile(mindmap_path)
+            else:
+                show_error_message(
+                    self,
+                    "Ошибка",
+                    "Не удалось создать интеллект-карту."
+                )
+                
+        except Exception as e:
+            logger.error(f"Ошибка при создании интеллект-карты: {str(e)}", exc_info=True)
+            show_error_message(
+                self,
+                "Ошибка",
+                f"Произошла ошибка при создании интеллект-карты: {str(e)}"
             ) 

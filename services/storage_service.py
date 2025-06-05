@@ -76,6 +76,10 @@ class StorageService:
             log_exception(f"Ошибка при сохранении статьи: {str(e)}")
             return False
             
+    def add_article(self, article: Article) -> bool:
+        """Алиас для метода save_article."""
+        return self.save_article(article)
+        
     def get_articles(self) -> List[Article]:
         """Возвращает список всех сохраненных статей."""
         try:

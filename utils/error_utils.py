@@ -5,6 +5,8 @@ import logging
 import traceback
 from functools import wraps
 from typing import Optional, Tuple, Type
+from PyQt6.QtWidgets import QMessageBox
+from PyPDF2 import PdfReader
 
 # Настройка логгера
 logger = logging.getLogger(__name__)

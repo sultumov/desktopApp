@@ -1,13 +1,19 @@
 """Компонент для отображения списка статей."""
 
-from PyQt6.QtWidgets import QListWidget, QListWidgetItem
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QMenu
+from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtGui import QCursor
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ArticleList(QListWidget):
     """Виджет для отображения списка статей."""
     
-    # Сигнал о выборе статьи
+    # Сигналы
     article_selected = pyqtSignal(object)
+    create_mindmap = pyqtSignal(str)  # Сигнал для создания интеллект-карты
+    find_references = pyqtSignal(str)  # Сигнал для поиска источников
     
     def __init__(self, parent=None):
         """Инициализирует список статей.
@@ -44,6 +50,8 @@ class ArticleList(QListWidget):
         """)
         self.articles = []
         self.currentItemChanged.connect(self._on_item_changed)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
         
     def add_article(self, article):
         """Добавляет статью в список.
@@ -53,8 +61,11 @@ class ArticleList(QListWidget):
         """
         try:
             if not article:
+                logger.warning("Попытка добавить пустую статью")
                 return
                 
+            logger.info(f"Добавление статьи в список: {article.title}")
+            
             # Создаем текст для отображения
             title = getattr(article, 'title', 'Без названия')
             authors = getattr(article, 'authors', [])
@@ -72,6 +83,7 @@ class ArticleList(QListWidget):
                     date_str = published.strftime('%d.%m.%Y')
                     display_text += f"\nДата: {date_str}"
                 except:
+                    logger.warning(f"Не удалось отформатировать дату для статьи: {title}")
                     pass
             
             # Создаем элемент списка
@@ -81,8 +93,10 @@ class ArticleList(QListWidget):
             self.addItem(item)
             self.articles.append(article)
             
+            logger.info(f"Статья успешно добавлена в список: {title}")
+            
         except Exception as e:
-            print(f"Ошибка при добавлении статьи в список: {str(e)}")
+            logger.error(f"Ошибка при добавлении статьи в список: {str(e)}", exc_info=True)
             
     def clear_list(self):
         """Очищает список статей."""
@@ -150,4 +164,42 @@ class ArticleList(QListWidget):
                 item.setHidden(not visible)
                 
         except Exception as e:
-            print(f"Ошибка при фильтрации статей: {str(e)}") 
+            print(f"Ошибка при фильтрации статей: {str(e)}")
+
+    def _show_context_menu(self, position):
+        """Показывает контекстное меню.
+        
+        Args:
+            position: Позиция курсора
+        """
+        try:
+            # Получаем выбранную статью
+            article = self.get_selected_article()
+            if not article:
+                return
+                
+            # Создаем меню
+            menu = QMenu(self)
+            
+            # Добавляем пункты меню
+            open_action = menu.addAction("Открыть в браузере")
+            mindmap_action = menu.addAction("Создать интеллект-карту")
+            references_action = menu.addAction("Найти источники")
+            
+            # Показываем меню
+            action = menu.exec(QCursor.pos())
+            
+            # Обрабатываем выбор пункта меню
+            if action == open_action:
+                if hasattr(article, 'url') and article.url:
+                    import webbrowser
+                    webbrowser.open(article.url)
+            elif action == mindmap_action:
+                if hasattr(article, 'id'):
+                    self.create_mindmap.emit(article.id)
+            elif action == references_action:
+                if hasattr(article, 'id'):
+                    self.find_references.emit(article.id)
+                    
+        except Exception as e:
+            print(f"Ошибка при показе контекстного меню: {str(e)}") 
